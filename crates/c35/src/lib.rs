@@ -832,6 +832,13 @@ impl Renderer {
                     offset: 12,
                     shader_location: 1,
                 },
+                // M5: baked horizon occlusion
+                // (scene::HeightGrid::bake_occlusion).
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 24,
+                    shader_location: 2,
+                },
             ],
         }];
 
@@ -1032,12 +1039,15 @@ impl Renderer {
 
         // ---- terrain geometry: the island as 16 tiles, generated in
         // parallel through the job pool (seeded — the same island on
-        // every host, vertex-for-vertex the M1/M2 island at the seams) ----
+        // every host, vertex-for-vertex the M1/M2 island at the seams).
+        // The M5 occlusion bake reads one shared height grid, built
+        // once here, so duplicated border vertices bake identical AO.
+        let height_grid = scene::HeightGrid::new();
         let mut tile_slots: Vec<Option<TerrainTile>> =
             (0..scene::TILE_COUNT).map(|_| None).collect();
         pool.for_each_chunk_mut(&mut tile_slots, pool.size(), &|start, chunk| {
             for (i, slot) in chunk.iter_mut().enumerate() {
-                *slot = Some(scene::generate_tile(start + i));
+                *slot = Some(scene::generate_tile(start + i, &height_grid));
             }
         });
         let tiles: Vec<TerrainTile> = tile_slots

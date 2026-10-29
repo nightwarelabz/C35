@@ -215,6 +215,63 @@ M4 pays the debts M3 named, in the open:
   sustainable ceiling here is level 5; the proof is the log,
   adjustments and EMAs included in the M4 report.
 
+## M5 — fold occlusion, motion at speed
+
+M5 takes the two levers M4 named and left, in the open:
+
+- **Fold occlusion — per-vertex horizon AO, baked from the height
+  field itself.** Terrain generation now builds one shared height
+  lattice (257², the field's own samples) and, for every vertex,
+  walks eight azimuths out over the actual relief — gullies, ribs,
+  benches and the wall's own bulk at 40 units — taking each azimuth's
+  horizon angle, judged against the local tangent plane, and folding
+  it into a sky-visibility term (cos² of the effective horizon,
+  azimuth-averaged). The value rides the vertex (one float; the
+  ledger prices it: +0.27 MiB tracked) and modulates exactly one
+  shader term — the hemisphere ambient, the only light a face inside
+  its own cast shadow has. Zero per-frame cost: no pass, no texture,
+  nothing at runtime but a vertex attribute. The bake's statistics
+  are the design working: island-wide mean visibility 0.987 (open
+  ground is untouched — median 0.997), while the steep band where
+  the folds live averages 0.868 with a tenth of its vertices below
+  0.72. Judged on the M3/M4 crops' own ground — readability of the
+  *shadowed* folds — the verdict is **improved, not cured**: the
+  winter face's fold-scale tonal structure rises 8% (summer 6%),
+  the change lands where it should (the face's darkest pixels move
+  2–3× more than its bright ones), and the gully banding is visible
+  in the crop in a way M4's flat brown was not. What still bounds
+  it is named in the report with numbers: at the proof pose roughly
+  a third of the face's displayed light is fog, and at night the
+  ambient's share is so small the term is nearly a no-op (the moon
+  term is the night term, and it is deliberately unoccluded). One
+  alternative was built and convicted by measurement on the way: a
+  bent-normal sampling of the ambient gradient cancels the scalar
+  term against this two-stop hemisphere model (face |Δ| 1.5 vs 6.0),
+  so the scalar ships and the bent direction waits for a directional
+  ambient. (`crates/c35/examples/ao_probe.rs` prints the bake's
+  distribution.)
+- **Motion reconstruction — the fast pan, measured; no fix
+  convicted.** M4 measured the drift and left the fast pan as a
+  named unknown. M5 first reproduces M4's A/B *exactly* (summer
+  drift, matched frames 60/150/239: luma mean |diff| 0.624 / 0.643 /
+  0.653 — M4's numbers to the third decimal), then stresses the
+  resolve at 4× and 16× the drift rate via a rig-only host flag
+  (`--drift-rate`; shipped runs never set it). The error does not
+  grow with rate: winter luma means sit in the same 0.71–0.92 band
+  at rates 1, 4 and 16, p99 6–10 throughout, flat across frames —
+  pose-dependent, not rate-dependent. The reconstruction's error is
+  sampling-dominated (the 0.70 internal scale's glitter, the known
+  static-case cost), not history-dominated: depth reprojection plus
+  the resolve's neighbourhood clamp already reject what motion
+  invalidates at every rate this rig can produce (per-frame image
+  motion stays at whole-frame phase shift (0, 0) px, frame-to-frame
+  mean |Δ| ≤ 0.22). So no velocity term was bought — the brief's
+  trigger (error growing with motion) is explicitly not met, and
+  the report says what would change the verdict: an operator camera
+  with translation and whip motion, which the shipped drift rig
+  does not have. That stress belongs to the milestone that builds
+  the camera.
+
 ## Milestones
 
 **M1 — the vista.** One deterministic procedural island: a generated
@@ -374,15 +431,22 @@ actually rendered (and which AA it ran: WebGL2 carries FXAA, not TAA).
 
 ## Status
 
-M4: cliff relief in terrain generation v2, GPU compute culling with
-CPU/GPU byte-parity, reconstruction measured under motion, and the
-governor's step-up proven live — on top of the M3 core (ECS/jobs,
-temporal reconstruction, governor, tiled culling/LOD) and the M2
-reality layer, re-run to the decimal in M4's regression. Proven on
-native (offscreen, and windowed under Xvfb) and in headless Chromium
-from this tree; the web run caught a real defect (a base-vertex draw
-WebGL2 cannot make) that the native runs structurally could not —
-the M4 report has the whole record. All numbers here are still
+M5: fold occlusion baked per-vertex from the height field (the
+headwall's shadowed folds gain their missing term; verdict improved,
+not cured, with the bounds measured), and the temporal
+reconstruction stress-tested to 16× the drift rate with no fix
+convicted — on top of M4 (cliff relief, GPU compute culling with
+CPU/GPU byte-parity, the governor's step-up proven live), the M3
+core (ECS/jobs, temporal reconstruction, governor, tiled
+culling/LOD) and the M2 reality layer, re-run to the decimal in
+M5's regression (all four seasons). Proven on native (offscreen,
+and windowed under Xvfb) from this tree; the wasm32 build is green
+and the web package regenerated, but M5's headless-Chromium drive
+is still owed: this sandbox's Chromium now refuses direct spawn
+("Hatch WebGL domain policy is required" — the policy is supplied
+by the browser daemon, not by any flag), so the winter + live web
+proofs run in a policy-equipped browser context, not from the
+proof shell. The M5 report has the whole record. All numbers here are still
 software-renderer numbers (llvmpipe / SwiftShader) — architecture
 proof, not hardware benchmarks. The first real-GPU witness will be
 an Apple M1 running the windowed host: Metal timestamps feed the

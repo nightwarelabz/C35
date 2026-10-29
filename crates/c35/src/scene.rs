@@ -183,6 +183,115 @@ fn height_base(x: f32, z: f32) -> f32 {
 pub struct TerrainVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    /// Baked horizon ambient occlusion in [0, 1] (M5): the fraction
+    /// of the sky hemisphere visible from this vertex over the height
+    /// field itself, horizon-mapped at fold scale. 1 = open sky.
+    /// Computed by [`HeightGrid::bake_occlusion`]; consumed by the
+    /// terrain shader against the hemisphere ambient — the term that
+    /// lights shadowed folds, where the M4 relief otherwise read flat.
+    pub ao: f32,
+}
+
+/// The generated heightfield sampled on its own lattice, kept around
+/// so derived fields (normals already come from `height_at` directly;
+/// M5 adds horizon occlusion) can be baked from the *actual* relief —
+/// gullies, ribs and benches included — instead of re-deriving noise.
+///
+/// Occlusion is horizon mapping, heightfield-style: from each vertex,
+/// eight azimuths are walked out to fold scale (≈28 world units — the
+/// relief's longest wavelength) and the highest horizon angle per
+/// azimuth, corrected by the local tangent plane's tilt in that
+/// azimuth, gives the blocked fraction of that azimuth's sky as
+/// cos²(effective horizon). The vertex value is the azimuth mean.
+/// Pure f32 math in a fixed order over a fixed lattice — the bake is
+/// deterministic, like everything else in this module.
+pub struct HeightGrid {
+    heights: Vec<f32>, // TERRAIN_GRID × TERRAIN_GRID, row-major (j = z)
+    step: f32,
+    half: f32,
+}
+
+impl HeightGrid {
+    pub fn new() -> Self {
+        let n = TERRAIN_GRID as usize;
+        let half = TERRAIN_SIZE * 0.5;
+        let step = TERRAIN_SIZE / (TERRAIN_GRID - 1) as f32;
+        let mut heights = Vec::with_capacity(n * n);
+        for j in 0..n {
+            for i in 0..n {
+                heights.push(height_at(
+                    -half + i as f32 * step,
+                    -half + j as f32 * step,
+                ));
+            }
+        }
+        HeightGrid { heights, step, half }
+    }
+
+    /// Bilinear height at an arbitrary point (clamped to the field).
+    fn height(&self, x: f32, z: f32) -> f32 {
+        let n = TERRAIN_GRID as f32;
+        let fx = ((x + self.half) / self.step).clamp(0.0, n - 1.001);
+        let fz = ((z + self.half) / self.step).clamp(0.0, n - 1.001);
+        let (i0, j0) = (fx.floor() as usize, fz.floor() as usize);
+        let (tx, tz) = (fx - i0 as f32, fz - j0 as f32);
+        let w = TERRAIN_GRID as usize;
+        let h00 = self.heights[j0 * w + i0];
+        let h10 = self.heights[j0 * w + i0 + 1];
+        let h01 = self.heights[(j0 + 1) * w + i0];
+        let h11 = self.heights[(j0 + 1) * w + i0 + 1];
+        (h00 * (1.0 - tx) + h10 * tx) * (1.0 - tz) + (h01 * (1.0 - tx) + h11 * tx) * tz
+    }
+
+    /// Horizon ambient occlusion at a terrain point, in [0, 1]:
+    /// 1 = the whole sky hemisphere reaches the point, lower = the
+    /// folds around it block sky. See the type docs for the
+    /// formulation. (The same walks yield a bent normal — the
+    /// visibility-weighted average open-sky direction — but M5's A/B
+    /// convicted it against this engine's two-stop hemisphere
+    /// ambient: sampling the gradient along the bent direction
+    /// raises the ambient almost exactly as much as the visibility
+    /// dims it on steep faces — face mean |Δ| 1.5 vs 6.0 for the
+    /// scalar alone — so the scalar ships and the bent direction
+    /// waits for a directional ambient. See the M5 report §1.)
+    pub fn bake_occlusion(&self, x: f32, z: f32) -> f32 {
+        // Radii walk from the tight folds beside the vertex out
+        // past the relief's longest wavelength (~28 units) to the
+        // wall's own bulk at 40 — the massif is the largest occluder
+        // its folds have. Geometrically spaced so the near folds are
+        // sampled densest.
+        const RADII: [f32; 8] = [1.5, 2.6, 4.4, 7.3, 12.0, 19.0, 28.0, 40.0];
+        let h0 = self.height(x, z);
+        // Local gradient (lattice central differences) — the tangent
+        // plane the horizon angles are judged against.
+        let e = self.step;
+        let gx = (self.height(x + e, z) - self.height(x - e, z)) / (2.0 * e);
+        let gz = (self.height(x, z + e) - self.height(x, z - e)) / (2.0 * e);
+        let mut visible = 0.0f32;
+        for k in 0..8 {
+            let a = (k as f32) * std::f32::consts::FRAC_PI_4;
+            let (ux, uz) = (a.cos(), a.sin());
+            // Horizon angle above horizontal along this azimuth —
+            // the terrain's silhouette elevation, which is NEGATIVE
+            // where the ground falls away (hence no zero floor here:
+            // flooring it would charge downhill azimuths occlusion
+            // they do not have once the tilt is subtracted below).
+            let mut horizon = f32::NEG_INFINITY;
+            for &r in &RADII {
+                let dh = self.height(x + ux * r, z + uz * r) - h0;
+                horizon = horizon.max((dh / r).atan());
+            }
+            // Judge the horizon against the local tangent plane: an
+            // obstacle only occludes past the plane's own tilt toward
+            // that azimuth. (On an infinite plane this yields exactly
+            // zero occlusion, as it must.)
+            let tilt = (gx * ux + gz * uz).atan();
+            let eff = (horizon - tilt).clamp(0.0, std::f32::consts::FRAC_PI_2);
+            let c = eff.cos();
+            visible += c * c;
+        }
+        (visible * 0.125).clamp(0.0, 1.0)
+    }
 }
 
 pub struct TerrainMesh {
@@ -200,6 +309,7 @@ impl TerrainMesh {
 /// grid as one mesh. Kept for the `heights` dev example; the renderer
 /// consumes the tiled form ([`generate_tiles`]).
 pub fn generate_terrain() -> TerrainMesh {
+    let grid = HeightGrid::new();
     let n = TERRAIN_GRID;
     let half = TERRAIN_SIZE * 0.5;
     let step = TERRAIN_SIZE / (n - 1) as f32;
@@ -208,7 +318,7 @@ pub fn generate_terrain() -> TerrainMesh {
         for i in 0..n {
             let x = -half + i as f32 * step;
             let z = -half + j as f32 * step;
-            vertices.push(sample_vertex(x, z, step));
+            vertices.push(sample_vertex(x, z, step, &grid));
         }
     }
     let mut indices = Vec::with_capacity(((n - 1) * (n - 1) * 6) as usize);
@@ -224,7 +334,7 @@ pub fn generate_terrain() -> TerrainMesh {
     TerrainMesh { vertices, indices }
 }
 
-fn sample_vertex(x: f32, z: f32, step: f32) -> TerrainVertex {
+fn sample_vertex(x: f32, z: f32, step: f32, grid: &HeightGrid) -> TerrainVertex {
     let y = height_at(x, z);
     // Normal from central differences of the height function.
     let e = step;
@@ -234,6 +344,7 @@ fn sample_vertex(x: f32, z: f32, step: f32) -> TerrainVertex {
     TerrainVertex {
         position: [x, y, z],
         normal: normal.to_array(),
+        ao: grid.bake_occlusion(x, z),
     }
 }
 
@@ -352,8 +463,10 @@ fn build_lod_indices(
 }
 
 /// Generate one tile by its grid index (0..TILE_COUNT, row-major over
-/// the 4×4 grid: ti = index % 4 east, tj = index / 4 south).
-pub fn generate_tile(index: usize) -> TerrainTile {
+/// the 4×4 grid: ti = index % 4 east, tj = index / 4 south). The height
+/// grid is shared across tiles so border vertices — duplicated per
+/// tile by construction — bake identical occlusion from it.
+pub fn generate_tile(index: usize, grid: &HeightGrid) -> TerrainTile {
     let half = TERRAIN_SIZE * 0.5;
     let step = TERRAIN_SIZE / (TERRAIN_GRID - 1) as f32;
     let local = TILE_CELLS + 1;
@@ -367,7 +480,7 @@ pub fn generate_tile(index: usize) -> TerrainTile {
         for a in 0..local {
             let x = -half + (i0 + a) as f32 * step;
             let z = -half + (j0 + b) as f32 * step;
-            let v = sample_vertex(x, z, step);
+            let v = sample_vertex(x, z, step, grid);
             min_y = min_y.min(v.position[1]);
             max_y = max_y.max(v.position[1]);
             vertices.push(v);
@@ -399,5 +512,6 @@ pub fn generate_tile(index: usize) -> TerrainTile {
 /// Generate the whole island as tiles. Same heights, same seed — the
 /// tiled island is vertex-for-vertex the M1/M2 island along every seam.
 pub fn generate_tiles() -> Vec<TerrainTile> {
-    (0..TILE_COUNT).map(generate_tile).collect()
+    let grid = HeightGrid::new();
+    (0..TILE_COUNT).map(|i| generate_tile(i, &grid)).collect()
 }

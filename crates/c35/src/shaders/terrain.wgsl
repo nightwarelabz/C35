@@ -6,16 +6,21 @@
 // M3: the detail fade reach is governor-driven (quality.x), and the rock
 // band is reworked — wall-scale mottling, deeper strata, cool shadow
 // tint, talus aprons — so the headwall keeps its structure in shadow.
+// M5: the hemisphere ambient is modulated by per-vertex horizon
+// occlusion baked from the height field (scene::HeightGrid) — the
+// folds wall off part of the sky, and the ambient term now knows it.
 
 struct TerrainIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) ao: f32,
 }
 
 struct TerrainOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) ao: f32,
 }
 
 @vertex
@@ -23,6 +28,7 @@ fn vs_main(in: TerrainIn) -> TerrainOut {
     var out: TerrainOut;
     out.world_pos = in.position;
     out.normal = in.normal;
+    out.ao = in.ao;
     out.clip = u.view_proj * vec4<f32>(in.position, 1.0);
     return out;
 }
@@ -151,8 +157,13 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
     let shadow_raw = shadow_factor(wp, n);
     let shadow = mix(1.0, shadow_raw, smoothstep(-0.05, 0.25, ndl));
     let wrap = clamp((ndl + 0.38) / 1.38, 0.0, 1.0);
-    // Hemisphere ambient from the reality layer.
-    let amb = mix(u.amb_ground.rgb, u.amb_sky.rgb, n.y * 0.5 + 0.5);
+    // Hemisphere ambient from the reality layer, occluded by the
+    // baked horizon visibility (M5): inside the relief folds the sky
+    // itself is partly walled off, and the ambient — the only term
+    // that lights a face inside its own cast shadow — now says so.
+    // The direct terms keep their own accounting (shadow map for
+    // the sun, none for the moon); this term is the fold term.
+    let amb = mix(u.amb_ground.rgb, u.amb_sky.rgb, n.y * 0.5 + 0.5) * in.ao;
     // The moon: faint, hard, shadowless key light.
     let moon_diff = max(dot(n, u.moon_dir.xyz), 0.0);
     var col = albedo * (u.sun_color.rgb * wrap * shadow * 0.82 + u.moon_color.rgb * moon_diff + amb);
