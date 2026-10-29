@@ -148,6 +148,73 @@ M3 turns the renderer into an engine core, in three systems:
   rasterizer, 16.7 ms is not in the building. On real hardware the same
   ledger is where the truth will show.
 
+## M4 — relief, GPU culling, motion, step-up
+
+M4 pays the debts M3 named, in the open:
+
+- **Terrain generation v2 — cliff relief.** The height function is now
+  the M1–M3 landform *plus* a slope-masked relief layer: where the base
+  slope is steep, the sample domain is warped (so the wall's rim breaks
+  into teeth and gullies instead of a smooth band) and a ridged
+  multifractal displaces the surface — strata ribs, gullies cut deeper
+  than ribs rise, and a faint bench terracing. The mask is zero on
+  meadows, shores and the bay floor, so gentle terrain is
+  vertex-for-vertex what it was; the grid stays 257² and the triangle
+  budget is unchanged (131,072 full density; 45,568 submitted at the
+  hero pose). The wall reads better — toothed rim, streaked face,
+  craggier skyline — and the report says plainly where it still
+  underwhelms: in its own shadow, ambient-only shading flattens what
+  geometry adds, and per-vertex horizon occlusion is the named next
+  lever.
+- **GPU compute culling (native).** All tiles now live in one merged
+  vertex buffer and one merged index buffer. On compute-capable
+  backends a compute pass runs the same frustum test and the same LOD
+  bands as the CPU visibility system (the neighbour relaxation runs to
+  the same fixed point), writes an indirect-draw argument per tile,
+  and the scene pass consumes them. The CPU system still owns the
+  shadow pass — and the whole story on WebGL2, which has no compute.
+  Every ledger names which culling ran and prices the compute pass
+  (llvmpipe timestamps: 0.082 ms in the parity run, up to ~1.15 ms
+  under contention on this shared VM). Proof is at the pixel level:
+  at both proof poses the GPU path's frame is **byte-identical** to
+  the CPU path's, with identical drawn/culled counts — agreement, not
+  a superset.
+- **The base-vertex law (a defect the web proof convicted).** The
+  first M4 web drive died on frame one: the merged draws carried each
+  tile's base vertex, and WebGL2 has no base-vertex draw — wgpu's GL
+  backend (glow) panics on the request. Native backends take
+  base-vertex draws without blinking, so no native proof could see
+  it. The merge stays; the assumption went: each tile's vertex offset
+  is baked into its index values at build time, every draw on every
+  path carries base vertex 0, and the native frames after the fix are
+  byte-identical to the frames before it (same sha256 at the winter
+  pin, both cull paths). One draw law, all backends.
+- **Reconstruction under motion, measured.** M3's A/B was a static
+  pose. M4 ran the deterministic drift orbit at scale 1.00 vs
+  0.70 + reconstruction and compared matched frames: the error is
+  stable across the run (mean |diff| ≈ 0.65 of 255 at frames 60, 150
+  and 239 — it does not accumulate), the skyline difference is a thin
+  1–2 px edge line, and the water's residual is soft sparkle mottling,
+  not directional smear. No fix was applied: the measured weakness is
+  the known static-case cost (glitter cannot be accumulated), and a
+  reactive mask would trade it against the AA benefit. A fast pan
+  would stress it harder — stated as a leftover, not hidden.
+- **The governor steps up, on camera.** M3 proved step-down and the
+  pin law; step-up needed headroom this bench never produced at 720p.
+  At 160×90 output, starting the live governor at level 7, it stepped
+  up on its own law — 7→6 at frame 300, 6→5 at 600, 5→4 at 930 —
+  each after the sustained-headroom requirement and the 300-frame
+  cooldown, then retreated to 5 within one 60-frame down-cooldown
+  when the 1024² shadow pass landed (the pass puts the frame EMA at
+  ~35–39 ms against ~5–9 ms with it off, and on llvmpipe that cost is
+  output-size-independent, so rungs above 5 are unreachable on this
+  bench at any output size). It probed 5→4 five times in the 2,400
+  frames, retreating the first four times; the fifth probe landed
+  exactly on the run's final frame, so that ledger ends mid-probe —
+  the ceiling claim rests on the four completed retreats. The
+  sustainable ceiling here is level 5; the proof is the log,
+  adjustments and EMAs included in the M4 report.
+
 ## Milestones
 
 **M1 — the vista.** One deterministic procedural island: a generated
@@ -272,7 +339,12 @@ COMIGEN_LAT=41.88 COMIGEN_LON=-87.63 \
   cargo run --release -p comigen-native -- --frames 120 --out hero.png
 # options: --width 1280 --height 720 --scale 1.0 --drift
 #          --pose hero|grazing (the culling proof pose)
+#          --cull cpu|gpu (visibility path; default gpu where the
+#            backend carries compute, cpu elsewhere — the ledger
+#            names the path that actually ran)
 #          --pin-level N (governor pin; default 0) · --governor (live)
+#          --start-level N (with --governor: ladder start, for the
+#            step-up proof) · --save-at 60,150,239 (extra frame saves)
 #          --target-ms 16.7 (governor target)
 # measurement rig only: COMIGEN_PIN_ISO=2026-01-15T08:00:00-06:00 pins the instant
 ```
@@ -302,14 +374,22 @@ actually rendered (and which AA it ran: WebGL2 carries FXAA, not TAA).
 
 ## Status
 
-M3: ECS/job core + temporal reconstruction + quality governor +
-tiled culling/LOD + the headwall/ice art pass, proven on native
-(offscreen, and windowed under Xvfb) and in headless Chromium from
-this tree — including the M2 reality matrix re-run to the decimal.
-All numbers here are still software-renderer numbers (llvmpipe /
-SwiftShader) — architecture proof, not hardware benchmarks. The first
-real-GPU witness will be an Apple M1 running the windowed host: Metal
-timestamps feed the same ledger.
+M4: cliff relief in terrain generation v2, GPU compute culling with
+CPU/GPU byte-parity, reconstruction measured under motion, and the
+governor's step-up proven live — on top of the M3 core (ECS/jobs,
+temporal reconstruction, governor, tiled culling/LOD) and the M2
+reality layer, re-run to the decimal in M4's regression. Proven on
+native (offscreen, and windowed under Xvfb) and in headless Chromium
+from this tree; the web run caught a real defect (a base-vertex draw
+WebGL2 cannot make) that the native runs structurally could not —
+the M4 report has the whole record. All numbers here are still
+software-renderer numbers (llvmpipe / SwiftShader) — architecture
+proof, not hardware benchmarks. The first real-GPU witness will be
+an Apple M1 running the windowed host: Metal timestamps feed the
+same ledger. Comigen is designated SystemZ's main graphics engine
+(the graphics/compositor role its SPEC §16 foresaw), so the native
+host path is the strategically first-class one; the hosts remain
+standalone applications.
 
 ## License
 

@@ -273,6 +273,7 @@ async fn run() {
                      {}\n\
                      {}\n\
                      anti-aliasing    : {}\n\
+                     culling          : {}\n\
                      draw calls/frame : {}\n\
                      triangles/frame  : {}\n\
                      tracked vram     : {:.2} MiB (engine-tracked allocations, estimate)\n\
@@ -294,6 +295,7 @@ async fn run() {
                     gpu_scene,
                     shadow_line,
                     renderer.aa_description(),
+                    renderer.culling_description(),
                     renderer.draw_calls_per_frame(),
                     renderer.triangles_per_frame(),
                     renderer.tracked_vram_bytes() as f64 / (1024.0 * 1024.0),

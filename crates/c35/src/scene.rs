@@ -86,10 +86,67 @@ pub fn camera_at(t: f32) -> CameraPose {
 }
 
 /// Island height function — the single source of truth for the terrain.
-/// A crescent island: massif to the north-west, a secondary headland to the
-/// north-east, and a bay carved open to the south-east where the hero
-/// camera floats.
+/// Terrain generation v2 (M4): the base landform ([`height_base`]),
+/// domain-warped and displaced on its steep faces ([`cliff_relief`]).
+/// The M3 art pass proved the headwall's flatness was geometric, and
+/// measuring the v1 landform showed why: the bay-mask rim is a nearly
+/// vertical band only ~2 grid cells wide, with a nearly constant normal
+/// field — no albedo work, and no purely vertical displacement at
+/// resolvable wavelengths, can model it. So on steep ground the sample
+/// point itself is warped (the wall advances and retreats along its
+/// length — buttresses and gullies in plan) and the warped height takes
+/// a ridged vertical displacement (ribs, benches). Both are masked to
+/// zero on gentle ground: the meadows, shores and bay floor are
+/// vertex-for-vertex the M1–M3 island.
 pub fn height_at(x: f32, z: f32) -> f32 {
+    let raw = height_base(x, z);
+    // Relief mask from the RAW landform at this point: nothing below
+    // the shore band (beaches and the bay floor keep the exact M1–M3
+    // profile, and the winter ice line with it), nothing on gentle
+    // slopes, full on faces steeper than ~53°.
+    if raw <= 1.0 {
+        return raw;
+    }
+    let e = 2.0;
+    let gx = (height_base(x + e, z) - height_base(x - e, z)) / (2.0 * e);
+    let gz = (height_base(x, z + e) - height_base(x, z - e)) / (2.0 * e);
+    let up = 1.0 / (1.0 + gx * gx + gz * gz).sqrt();
+    let mask = smoothstep(0.90, 0.60, up) * smoothstep(1.0, 5.0, raw);
+    if mask <= 0.0 {
+        return raw;
+    }
+    // Domain warp at wall scale (principal wavelength ~26 units,
+    // ±8-unit reach at full mask): steep faces sample the landform
+    // from shifted points, so the rim juts and notches along its length
+    // instead of running as one smooth curtain edge.
+    let wx = fbm(x * 0.030 + 13.7, z * 0.030 + 3.1, 3, WORLD_SEED ^ 0x9A01) * 8.0;
+    let wz = fbm(x * 0.030 + 7.9, z * 0.030 + 19.3, 3, WORLD_SEED ^ 0x9A02) * 8.0;
+    let (sx, sz) = (x + wx * mask, z + wz * mask);
+    let h0 = height_base(sx, sz);
+    h0 + cliff_relief(sx, sz, h0) * mask
+}
+
+/// The vertical half of the cliff relief: ridged multifractal
+/// displacement at wall scale (principal wavelengths ≈28 → 14 → 6.5
+/// world units — the 257² grid's 2.03-unit step resolves all three,
+/// and the headwall tiles draw at full density at the proof poses).
+/// Gullies carve deeper than ribs rise — real cliff faces are more cut
+/// than built. A low-amplitude bench term, phased by height and warped
+/// by low-frequency noise, lays strata ledges across the face. The
+/// caller applies the slope/shore mask.
+fn cliff_relief(x: f32, z: f32, h0: f32) -> f32 {
+    let r = ridged(x * 0.035, z * 0.035, 3, WORLD_SEED ^ 0xC11F);
+    let ribs = (r - 0.52) * 2.0;
+    let disp = ribs * 2.6 + ribs.min(0.0) * 1.6;
+    let warp = fbm(x * 0.010, z * 0.010, 2, WORLD_SEED ^ 0xBE11) * 5.0;
+    let bench = (h0 * 0.42 + warp).sin() * 0.6;
+    disp + bench
+}
+
+/// The base landform (terrain generation v1, M1–M3): a crescent island —
+/// massif to the north-west, a secondary headland to the north-east, and
+/// a bay carved open to the south-east where the hero camera floats.
+fn height_base(x: f32, z: f32) -> f32 {
     let p = Vec2::new(x, z);
     let r = p.length();
 
