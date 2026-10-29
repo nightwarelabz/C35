@@ -17,10 +17,18 @@
 <h1>COMIGEN <span>/ C35</span> — the vista, in your browser</h1>
 <canvas id="comigen-canvas" width="1280" height="720"></canvas>
 <p>status: <span id="status">rendering…</span> · backend: <span id="backend">…</span></p>
+<p>location: <span id="location">asking…</span></p>
 <pre id="ledger">ledger warming up…</pre>
 <p class="note">One procedural island, generated from a fixed seed — no image assets.
 The same engine crate renders natively and here. The camera holds the hero pose
 until the status reads “ready”, then begins its slow drift.</p>
+<p class="note">This page is lit by the real world: the sun, the sky and the season on
+screen are computed from your system clock and — if you grant it — your coarse
+geolocation, through a real solar model. If it is fall where you are, the foliage
+ambers; if it is 9 PM, the sun is down. There are no time or season controls here,
+by design. Your location is used locally by the engine and is never transmitted
+anywhere; only latitude/longitude feed the solar math. Deny the permission and the
+page says so above, and runs at a stated equator fallback instead.</p>
 <script type="module">
   import init from './pkg/comigen_web.js';
   // Probe WebGPU first: if it hands out no adapter (common on headless

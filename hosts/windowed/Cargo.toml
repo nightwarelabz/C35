@@ -1,0 +1,12 @@
+[package]
+name = "comigen-windowed"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Comigen windowed host — the vista live in a real window: drift orbit until you touch it, then free-fly. Reality-driven (system clock + COMIGEN_LAT); no time controls."
+
+[dependencies]
+c35 = { path = "../../crates/c35" }
+glam = "0.30"
+winit = "0.30"
+time = { version = "0.3", features = ["local-offset"] }

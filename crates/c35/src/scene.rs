@@ -1,8 +1,9 @@
-//! The M1 vista: one deterministic procedural island at golden hour.
+//! The vista: one deterministic procedural island.
 //!
 //! Terrain is a generated heightfield mesh (no image assets anywhere). The
-//! height function lives here in Rust; colour banding, sky, water and fog are
-//! procedural in the shaders.
+//! height function lives here in Rust; colour banding, sky, water and fog
+//! are procedural in the shaders. Light, season and time itself belong to
+//! the reality layer ([`crate::world`]) — this module owns only the land.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3};
@@ -15,17 +16,6 @@ pub const TERRAIN_SIZE: f32 = 520.0;
 pub const TERRAIN_GRID: u32 = 257;
 /// Sea level.
 pub const WATER_LEVEL: f32 = 0.0;
-
-/// Golden-hour sun: direction *toward* the sun, and its colour (HDR).
-/// Elevation ~9.5 degrees — long shadows, warm light.
-pub fn sun_direction() -> Vec3 {
-    // Azimuth chosen so the sun hangs over the bay in the hero pose.
-    Vec3::new(-0.62, 0.165, -0.77).normalize()
-}
-
-pub fn sun_color() -> Vec3 {
-    Vec3::new(1.0, 0.52, 0.24) * 3.1
-}
 
 /// The hero camera pose — THE proof pose, identical on every host.
 /// Drift (when enabled) starts here.

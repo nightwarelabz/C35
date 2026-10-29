@@ -24,4 +24,9 @@ features = [
     "HtmlCanvasElement",
     "HtmlElement",
     "Performance",
+    "Navigator",
+    "Geolocation",
+    "Position",
+    "Coordinates",
+    "PositionError",
 ]
