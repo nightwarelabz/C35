@@ -1,0 +1,10 @@
+[package]
+name = "comigen-native"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Comigen native host — headless offscreen proof runner (ledger + hero PNG)."
+
+[dependencies]
+c35 = { path = "../../crates/c35" }
+image = { version = "0.25", default-features = false, features = ["png"] }

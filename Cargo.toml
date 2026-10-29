@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/c35", "hosts/native", "hosts/web"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"

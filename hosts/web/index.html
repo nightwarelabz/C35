@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comigen (C35) — web host</title>
+<style>
+  body { background: #0b0e13; color: #d8dee9; font-family: ui-monospace, Menlo, monospace; margin: 24px; }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.04em; }
+  h1 span { color: #e8a35c; }
+  canvas { display: block; width: 1280px; height: 720px; background: #000; }
+  pre { font-size: 12.5px; line-height: 1.5; color: #a9e5c0; }
+  #status { color: #e8a35c; }
+  .note { color: #7d879c; font-size: 12px; max-width: 1280px; }
+</style>
+</head>
+<body>
+<h1>COMIGEN <span>/ C35</span> — the vista, in your browser</h1>
+<canvas id="comigen-canvas" width="1280" height="720"></canvas>
+<p>status: <span id="status">rendering…</span> · backend: <span id="backend">…</span></p>
+<pre id="ledger">ledger warming up…</pre>
+<p class="note">One procedural island, generated from a fixed seed — no image assets.
+The same engine crate renders natively and here. The camera holds the hero pose
+until the status reads “ready”, then begins its slow drift.</p>
+<script type="module">
+  import init from './pkg/comigen_web.js';
+  // Probe WebGPU first: if it hands out no adapter (common on headless
+  // software stacks), flag the engine to build its WebGL2 instance instead.
+  window.__comigen_force_gl = false;
+  if (navigator.gpu) {
+    try {
+      const a = await navigator.gpu.requestAdapter()
+        || await navigator.gpu.requestAdapter({ powerPreference: 'low-power' });
+      window.__comigen_force_gl = !a;
+    } catch { window.__comigen_force_gl = true; }
+  }
+  init();
+</script>
+</body>
+</html>
