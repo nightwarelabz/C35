@@ -23,14 +23,15 @@ struct Uniforms {
     season: vec4<f32>,      // x: cold · y: autumn · z: spring · w: snow line (world y)
     water_p: vec4<f32>,     // x: ice · y: wave scale · z: star intensity · w: daylight
     misc: vec4<f32>,        // x: time s · y: shadow strength · z: render scale · w: aspect
+    quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed)
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var shadow_tex: texture_depth_2d;
 @group(0) @binding(2) var shadow_samp: sampler_comparison;
 
-// Kept in sync with SHADOW_MAP_SIZE in lib.rs.
-const SHADOW_TEXEL: f32 = 1.0 / 2048.0;
+// The PCF texel size rides in the quality uniform: the governor resizes
+// the shadow map (2048 → 1024 → off), and the filter footprint follows.
 
 // The one sky function — used by the sky dome AND by the water for
 // reflections, so the sea reflects exactly the sky that is drawn.
@@ -103,7 +104,7 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
         for (var j = -1; j <= 1; j++) {
             sum += textureSampleCompare(
                 shadow_tex, shadow_samp,
-                uv + vec2<f32>(f32(i), f32(j)) * SHADOW_TEXEL,
+                uv + vec2<f32>(f32(i), f32(j)) * u.quality.z,
                 ndc.z - 0.0012,
             );
         }

@@ -3,6 +3,9 @@
 // arrive as uniforms; a fragment detail pass (multi-octave grain + normal
 // perturbation, faded with distance) breaks up the smooth slopes; the sun
 // term is modulated by the real shadow map; the moon is a faint key light.
+// M3: the detail fade reach is governor-driven (quality.x), and the rock
+// band is reworked — wall-scale mottling, deeper strata, cool shadow
+// tint, talus aprons — so the headwall keeps its structure in shadow.
 
 struct TerrainIn {
     @location(0) position: vec3<f32>,
@@ -26,9 +29,9 @@ fn vs_main(in: TerrainIn) -> TerrainOut {
 
 // Detail fade: full grain near the camera, gone by ~450 units so the far
 // field cannot shimmer or stipple (each octave is also throttled by its
-// own reach).
+// own reach). The governor's detail step scales the reach (quality.x).
 fn detail_fade(dist: f32) -> f32 {
-    return exp(-dist * 0.0055);
+    return exp(-dist * 0.0055 / max(u.quality.x, 0.05));
 }
 
 fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f32> {
@@ -49,12 +52,25 @@ fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f3
     grass = mix(grass, grass * vec3<f32>(1.10, 1.28, 0.82) + vec3<f32>(0.015, 0.045, 0.0), spring_w * 0.65);
     let dry = vec3<f32>(0.45, 0.38, 0.19);
     let sand = vec3<f32>(0.78, 0.63, 0.42);
-    // Rock: strata banding jittered by grain so the beds wobble like beds;
-    // the banding itself calms with distance (subpixel beds moiré).
-    let strata_jitter = (grain - 0.5) * 1.9;
-    let strata = 1.0 + (sin(wp.y * 0.5 + micro * 2.2 + strata_jitter) * 0.5 + 0.5)
-        * 0.22 * (1.0 - up) * (0.25 + 0.75 * fade);
+    // Rock. M3 — the headwall fix: the M2 band read as a flat curtain
+    // wherever the light went uniform, because in shadow the whole face
+    // takes one ambient tone and its albedo variation lived at micro
+    // scale only — variation the detail fade had already calmed at
+    // viewing distance. The variation now lives at wall scale too:
+    // large mottling (top-down on ledges, face-projected on walls),
+    // strata with real contrast that keeps some depth at range, and a
+    // cool cast in the mottled lows — a shadowed face keeps its weather.
+    let mottle_top = vnoise(wp.xz * 0.013 + 2.9);
+    let mottle_face = vnoise(vec2<f32>(wp.x + wp.z * 0.7, wp.y) * 0.017 + 6.3);
+    let mottle = mix(mottle_top, mottle_face, 1.0 - up) * 0.62
+        + vnoise(wp.xz * 0.055 + 9.1) * 0.38;
+    let strata_jitter = (grain - 0.5) * 1.9 + (mottle - 0.5) * 2.6;
+    let bed = sin(wp.y * 0.5 + micro * 2.2 + strata_jitter) * 0.5 + 0.5;
+    let strata = 0.84 + bed * 0.32 * (1.0 - up) * (0.45 + 0.55 * fade);
     var rock = mix(vec3<f32>(0.235, 0.225, 0.225), vec3<f32>(0.40, 0.345, 0.29), micro * (0.35 + 0.65 * up));
+    rock *= 0.76 + 0.48 * mottle; // wall-scale weathering
+    // Cool lows: the mottled hollows lean blue-grey, not brown.
+    rock = mix(rock, rock * vec3<f32>(0.88, 0.96, 1.14), (1.0 - mottle) * 0.55 * (1.0 - up));
     rock *= strata;
     rock *= 0.86 + 0.28 * grain; // granular breakup in the rock band
     let snow = vec3<f32>(0.92, 0.94, 0.97);
@@ -75,6 +91,13 @@ fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f3
     col = mix(sand, col, smoothstep(0.35, 1.9, wp.y));
     // Rock takes over on steep slopes.
     col = mix(rock, col, smoothstep(0.52, 0.78, up));
+    // Scree: a talus apron where the walls shed onto gentler, low
+    // ground — lighter rubble, strongly grained, feathered by the
+    // mottle so it fans like debris instead of ruling a band.
+    let talus = smoothstep(0.80, 0.64, up) * smoothstep(0.38, 0.52, up)
+        * smoothstep(16.0, 5.0, wp.y) * (0.45 + 0.55 * mottle);
+    let rubble = vec3<f32>(0.46, 0.435, 0.40) * (0.78 + 0.44 * grain) * strata;
+    col = mix(col, rubble, talus * 0.8);
     // Snow: the line arrives from the reality layer (deep cold puts it at
     // the shoreline), and cold snow clings to steeper ground than summer
     // snow. Patchy by grain so it feathers instead of ruling a line.
@@ -133,6 +156,12 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
     // The moon: faint, hard, shadowless key light.
     let moon_diff = max(dot(n, u.moon_dir.xyz), 0.0);
     var col = albedo * (u.sun_color.rgb * wrap * shadow * 0.82 + u.moon_color.rgb * moon_diff + amb);
+
+    // A shadowed wall cools toward blue-grey rather than holding one
+    // flat brown: the tint rides the final shadow factor, so it lands
+    // exactly where the sun does not.
+    let rock_mask = (1.0 - smoothstep(0.52, 0.78, n.y)) * smoothstep(-0.5, 0.5, wp.y);
+    col = mix(col, col * vec3<f32>(0.86, 0.94, 1.14), rock_mask * (1.0 - shadow) * 0.5);
 
     // Wet sheen band at the shoreline: darker albedo + sun/moon glints.
     let wet = smoothstep(1.1, 0.2, wp.y) * smoothstep(-0.4, 0.1, wp.y);

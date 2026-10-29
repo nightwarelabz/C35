@@ -5,6 +5,8 @@
 // M2: the reality layer calms and freezes it — wave motion scales down as
 // cold deepens, ice patches sheet over in deep winter with a hard pale
 // glint, and at night the glitter path runs off the moon instead.
+// M3: the governor sheds wave octaves (quality.y), and the frozen sheet
+// roughens its own normals so the ice glint sparkles instead of striping.
 
 struct WaterOut {
     @builtin(position) clip: vec4<f32>,
@@ -44,9 +46,18 @@ fn noise_grad(p: vec2<f32>) -> vec2<f32> {
 fn water_normal(p: vec2<f32>, t: f32, dist: f32, amp: f32) -> vec3<f32> {
     var g = vec2<f32>(0.0);
     g += wave_grad(p, vec2<f32>(0.83, 0.55), 27.0, 0.85, 0.085, t);
-    g += wave_grad(p, vec2<f32>(-0.42, 0.91), 13.0, 1.20, 0.060, t);
-    g += wave_grad(p, vec2<f32>(0.97, -0.24), 6.1, 1.80, 0.038, t);
-    g += wave_grad(p, vec2<f32>(-0.20, -0.98), 3.1, 2.50, 0.022, t);
+    // The governor sheds wave octaves from the top down (quality.y):
+    // the long swell always stays; the chop is what costs.
+    let oct = i32(u.quality.y + 0.5);
+    if (oct >= 2) {
+        g += wave_grad(p, vec2<f32>(-0.42, 0.91), 13.0, 1.20, 0.060, t);
+    }
+    if (oct >= 3) {
+        g += wave_grad(p, vec2<f32>(0.97, -0.24), 6.1, 1.80, 0.038, t);
+    }
+    if (oct >= 4) {
+        g += wave_grad(p, vec2<f32>(-0.20, -0.98), 3.1, 2.50, 0.022, t);
+    }
     // Noise breakup: strong nearby, easing off with distance so the far
     // field calms instead of aliasing.
     let nfade = exp(-dist * 0.006);
@@ -68,7 +79,15 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     // Time itself slows as the sea freezes; amplitude dies with it.
     let t = u.misc.x * wave_scale;
     let amp = mix(1.0, 0.22, ice);
-    let n = water_normal(wp.xz, t, dist, amp);
+    var n = water_normal(wp.xz, t, dist, amp);
+    if (ice > 0.01) {
+        // M3: frozen water is not a mirror. As the amp dies the normal
+        // field goes uniform and the sun glint smeared into wind-stripes
+        // (M2 leftover) — so ice roughens the normal with its own grain
+        // and the glint breaks into sparkle over the sheet instead.
+        let ig = noise_grad(wp.xz * 0.85 + 2.3);
+        n = normalize(n + vec3<f32>(-ig.x, 0.0, -ig.y) * 0.35 * ice);
+    }
 
     let refl_dir = reflect(-view_dir, n);
     let sky = sky_color(vec3<f32>(refl_dir.x, abs(refl_dir.y), refl_dir.z));
@@ -100,8 +119,10 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
         let ice_col = vec3<f32>(0.62, 0.70, 0.78) * (0.35 + 0.65 * u.water_p.w)
             + u.amb_sky.rgb * 0.5;
         var iced = ice_col;
-        iced += u.sun_color.rgb * pow(ndh, 260.0) * 1.4 * shadow;
-        iced += u.moon_color.rgb * pow(mndh, 260.0) * 0.8;
+        // The sheet's glint is noise-broken too: no clean band survives.
+        let glint_break = 0.35 + 0.65 * vnoise(wp.xz * 1.4) * vnoise(wp.xz * 0.23 + 8.1);
+        iced += u.sun_color.rgb * pow(ndh, 260.0) * 1.4 * shadow * glint_break;
+        iced += u.moon_color.rgb * pow(mndh, 260.0) * 0.8 * glint_break;
         iced += sky * 0.18;
         col = mix(col, iced, ice_patch * ice * 0.92);
     }

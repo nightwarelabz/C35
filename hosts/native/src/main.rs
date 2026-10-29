@@ -17,6 +17,17 @@
 //!
 //! Usage: comigen-native [--width 1280] [--height 720] [--frames 120]
 //!        [--scale 1.0] [--out hero.png] [--drift]
+//!        [--pose hero|grazing]
+//!        [--pin-level N | --governor] [--target-ms 16.7]
+//!
+//! M3 rig notes: the quality governor is **pinned at level 0 by
+//! default** in this host, so a proof run's output is a deterministic
+//! function of its pin (the ladder cannot wander mid-measurement).
+//! `--pin-level N` pins another level (the A/B reconstruction proof is
+//! level 0 vs level 2 at the same pose). `--governor` unpins it: the
+//! governor then governs live against `--target-ms`, printing every
+//! adjustment as it happens; the saved PNG is the final frame at
+//! whatever level the ladder reached.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -167,6 +178,10 @@ fn main() {
         .unwrap_or(1.0);
     let out = arg_value(&args, "--out").unwrap_or_else(|| "hero.png".to_string());
     let drift = args.iter().any(|a| a == "--drift");
+    let pose_name = arg_value(&args, "--pose").unwrap_or_else(|| "hero".to_string());
+    let pin_level: Option<usize> = arg_value(&args, "--pin-level").and_then(|v| v.parse().ok());
+    let governor_live = args.iter().any(|a| a == "--governor");
+    let target_ms: Option<f64> = arg_value(&args, "--target-ms").and_then(|v| v.parse().ok());
 
     let reality = resolve_reality();
     let world = reality.world;
@@ -179,6 +194,33 @@ fn main() {
         height,
         scale,
     ));
+
+    // Governor setup (before any frame): target, then pin or live.
+    if let Some(t) = target_ms {
+        renderer.set_governor_target(t);
+    }
+    let gov_mode = if governor_live {
+        "live (unpinned)".to_string()
+    } else {
+        let lvl = pin_level.unwrap_or(0);
+        renderer.pin_governor(Some(lvl));
+        format!("pinned at level {lvl}")
+    };
+
+    // Proof pose: the hero pose (drift orbits it) or the fixed grazing
+    // pose where culling bites (drift does not apply there).
+    let fixed_pose = if pose_name == "grazing" {
+        c35::scene::GRAZING_POSE
+    } else {
+        c35::scene::HERO_POSE
+    };
+    let pose_at = |t: f32| -> c35::scene::CameraPose {
+        if pose_name == "grazing" {
+            fixed_pose
+        } else {
+            c35::scene::camera_at(t)
+        }
+    };
 
     let out_tex = renderer.device.create_texture(&c35::wgpu::TextureDescriptor {
         label: Some("host output"),
@@ -199,19 +241,36 @@ fn main() {
     // Warmup: shader compilation and pipeline setup land here, not in the
     // measured run.
     for _ in 0..10 {
-        renderer.render(&out_view, &c35::scene::camera_at(0.0), &world, 0.0);
+        renderer.render(&out_view, &pose_at(0.0), &world, 0.0);
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
     }
     let _ = renderer.drain_gpu_samples();
 
     let mut frame_ms: Vec<f64> = Vec::with_capacity(frames);
+    let mut update_ms: Vec<f64> = Vec::with_capacity(frames);
+    let mut printed_adj = 0usize;
     for i in 0..frames {
         let t = if drift { i as f32 / 60.0 } else { 0.0 };
-        let pose = c35::scene::camera_at(t);
+        let pose = pose_at(t);
         let start = Instant::now();
         renderer.render(&out_view, &pose, &world, t);
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
-        frame_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        frame_ms.push(ms);
+        update_ms.push(renderer.core_stats().update_ms);
+        // The governor eats the same number the ledger reports; in live
+        // mode its adjustments print as they happen.
+        renderer.observe_frame_ms(ms);
+        let adj = renderer.governor().adjustments();
+        while printed_adj < adj.len() {
+            let a = adj[printed_adj];
+            println!(
+                "[governor] frame {} : level {} -> {} (frame EMA {:.2} ms vs target {:.1} ms)",
+                a.frame, a.from_level, a.to_level, a.ema_ms,
+                renderer.governor().target_ms()
+            );
+            printed_adj += 1;
+        }
     }
     let (shadow_ms, gpu_ms) = renderer.drain_gpu_samples();
 
@@ -246,12 +305,14 @@ fn main() {
             );
         }
         println!(
-            "shadow pass      : {} draw call, {} triangles (single cascade, {}x{})",
+            "shadow pass      : {} draw calls, {} triangles (single cascade, {}x{})",
             renderer.shadow_draw_calls_per_frame(),
             renderer.shadow_triangles_per_frame(),
-            c35::SHADOW_MAP_SIZE,
-            c35::SHADOW_MAP_SIZE
+            renderer.shadow_map_size(),
+            renderer.shadow_map_size()
         );
+    } else if world.sun_elevation_deg > 0.0 {
+        println!("shadow pass      : shed by the governor (sun is up, shadow map off at this level)");
     } else {
         println!("shadow pass      : skipped — sun below horizon (shadows are sun-only)");
     }
@@ -264,7 +325,7 @@ fn main() {
             gpu_ms.len()
         );
     }
-    println!("anti-aliasing    : {}", renderer.aa_mode().describe());
+    println!("anti-aliasing    : {}", renderer.aa_description());
     println!("draw calls/frame : {}", renderer.draw_calls_per_frame());
     println!("triangles/frame  : {}", renderer.triangles_per_frame());
     println!(
@@ -272,6 +333,75 @@ fn main() {
         renderer.tracked_vram_bytes() as f64 / (1024.0 * 1024.0)
     );
     println!("hero pose png    : {out}");
+
+    // ---- the M3 core: ECS + visibility accounting ----
+    let core = renderer.core_stats();
+    let cull = renderer.cull_stats();
+    println!("--- engine core ---");
+    println!(
+        "entities         : {} (camera, world state, {} tiles, water, sky)",
+        core.entities, cull.tiles_total
+    );
+    println!(
+        "systems          : {} [{}]",
+        core.systems,
+        renderer.system_names().join(", ")
+    );
+    println!(
+        "job pool         : {} workers, {} jobs executed",
+        core.pool_size, core.jobs_executed
+    );
+    println!(
+        "scene update     : mean {:.3} ms CPU (bind + frustum/LOD over {} tiles)",
+        c35::mean(&update_ms),
+        cull.tiles_total
+    );
+    println!(
+        "tiles (camera)   : {} drawn, {} culled of {}",
+        cull.tiles_drawn, cull.tiles_culled, cull.tiles_total
+    );
+    println!(
+        "tiles (shadow)   : {} drawn, {} culled of {}",
+        cull.shadow_drawn, cull.shadow_culled, cull.tiles_total
+    );
+    println!(
+        "triangles        : {} at full density -> {} submitted (camera pass)",
+        cull.tris_before, cull.tris_after
+    );
+
+    // ---- the governor's own account ----
+    let gov = renderer.governor();
+    let qs = gov.state();
+    let shadow_desc = if qs.shadow_size > 0 {
+        format!("{}x{}", qs.shadow_size, qs.shadow_size)
+    } else {
+        "off".to_string()
+    };
+    println!("--- governor ---");
+    println!("mode             : {gov_mode}");
+    println!("target           : {:.1} ms/frame", gov.target_ms());
+    println!(
+        "final level      : {} (scale {:.2}, shadow {}, detail x{:.2}, water {} octaves)",
+        gov.level(),
+        qs.render_scale,
+        shadow_desc,
+        qs.detail_fade_mul,
+        qs.water_octaves
+    );
+    println!("frame EMA        : {:.2} ms", gov.ema_ms());
+    println!("adjustments      : {}", gov.adjustments().len());
+    for a in gov.adjustments() {
+        println!(
+            "  frame {} : level {} -> {} (EMA {:.2} ms)",
+            a.frame, a.from_level, a.to_level, a.ema_ms
+        );
+    }
+    if gov.is_pinned() {
+        println!(
+            "pinned overruns  : {} frames with EMA over target (reported, never acted on)",
+            gov.pinned_overruns()
+        );
+    }
     print_reality(&reality);
 }
 

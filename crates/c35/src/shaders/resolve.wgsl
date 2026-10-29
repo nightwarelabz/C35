@@ -1,8 +1,15 @@
-// Temporal AA resolve: the scene pass renders with a sub-pixel jittered
-// projection; this pass un-jitters the current frame, reprojects this
-// frame's depth into last frame's view to find the history sample, clamps
-// that sample to the current frame's 3x3 neighbourhood (the ghost-killer),
-// and blends. Output feeds the blit and becomes next frame's history.
+// Temporal reconstruction (M3; M2 shipped this pass as same-resolution
+// TAA). The scene pass renders at the governor's internal scale with a
+// sub-pixel jittered projection; THIS pass runs at output resolution —
+// each output pixel un-jitters and samples the internal frame, reprojects
+// its depth into last frame's view to find the history sample (history
+// lives at output resolution too), clamps that sample to the current
+// frame's 3x3 neighbourhood (the ghost-killer), and blends. The blend at
+// output resolution over a jittered low-res input stream IS the
+// upsampler: detail the internal frame never held in one frame is
+// accumulated across frames. The depth it reprojects by is the internal
+// depth, so disocclusion edges are as coarse as the internal grid —
+// stated plainly; the clamp keeps them honest.
 // Where the backend cannot carry this (the WebGL2 fallback), the blit's
 // FXAA runs instead and the ledger says so — nothing here is faked.
 
@@ -38,9 +45,15 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> ROut {
 
 @fragment
 fn fs_main(in: ROut) -> @location(0) vec4<f32> {
-    let dims = vec2<f32>(textureDimensions(cur_tex));
-    let px = vec2<i32>(in.clip.xy);
-    let max_px = vec2<i32>(dims) - vec2<i32>(1, 1);
+    // This pass's pixels are OUTPUT pixels; the current frame and its
+    // depth live at the internal resolution. Map between the two by UV.
+    let cur_dims = vec2<f32>(textureDimensions(cur_tex));
+    let cur_px = clamp(
+        vec2<i32>(in.uv * cur_dims),
+        vec2<i32>(0, 0),
+        vec2<i32>(cur_dims) - vec2<i32>(1, 1),
+    );
+    let max_px = vec2<i32>(cur_dims) - vec2<i32>(1, 1);
 
     // Current colour, un-jittered: the rasterizer shifted the image by the
     // jitter, so sample back by the same amount.
@@ -51,7 +64,7 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
     var cmax = vec3<f32>(-1e9);
     for (var i = -1; i <= 1; i++) {
         for (var j = -1; j <= 1; j++) {
-            let q = clamp(px + vec2<i32>(i, j), vec2<i32>(0, 0), max_px);
+            let q = clamp(cur_px + vec2<i32>(i, j), vec2<i32>(0, 0), max_px);
             let c = textureLoad(cur_tex, q, 0).rgb;
             cmin = min(cmin, c);
             cmax = max(cmax, c);
@@ -62,9 +75,10 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
         return vec4<f32>(cur, 1.0); // no history yet (first frame / resize)
     }
 
-    // Reproject: this pixel's world position (from depth) into last
-    // frame's clip space.
-    let depth = textureLoad(depth_tex, px, 0);
+    // Reproject: this pixel's world position (from the internal depth)
+    // into last frame's clip space; the history texture is output-sized,
+    // so the previous UV addresses it directly.
+    let depth = textureLoad(depth_tex, cur_px, 0);
     let ndc = vec4<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0, depth, 1.0);
     let wp4 = ru.inv_view_proj * ndc;
     let prev_clip = ru.prev_view_proj * (wp4 / wp4.w);

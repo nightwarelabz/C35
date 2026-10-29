@@ -245,10 +245,13 @@ async fn run() {
                 };
                 let shadow_line = if renderer.shadow_active() {
                     if shadow_samples.is_empty() {
-                        "shadow pass      : 1 draw call (gpu time n/a on this backend)".to_string()
+                        format!(
+                            "shadow pass      : {} draw calls (gpu time n/a on this backend)",
+                            renderer.shadow_draw_calls_per_frame()
+                        )
                     } else {
                         format!(
-                            "shadow pass      : {} draw call, gpu mean {:.2} ms",
+                            "shadow pass      : {} draw calls, gpu mean {:.2} ms",
                             renderer.shadow_draw_calls_per_frame(),
                             c35::mean(&shadow_samples)
                         )
@@ -290,7 +293,7 @@ async fn run() {
                     c35::percentile(&deltas, 95.0),
                     gpu_scene,
                     shadow_line,
-                    renderer.aa_mode().describe(),
+                    renderer.aa_description(),
                     renderer.draw_calls_per_frame(),
                     renderer.triangles_per_frame(),
                     renderer.tracked_vram_bytes() as f64 / (1024.0 * 1024.0),

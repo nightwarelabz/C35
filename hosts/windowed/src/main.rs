@@ -17,6 +17,14 @@
 //! The cost ledger rides in the title bar (frame ms, GPU pass ms, draw
 //! calls, backend, the sun's elevation and the season in force); the full
 //! reality reading prints to stdout at startup.
+//!
+//! The quality governor runs live in this host: it holds the frame
+//! against 16.7 ms and sheds its own costs (scale, shadows, detail,
+//! water) when the machine can't. Keys **0–4 pin** ladder levels 0–4 —
+//! a pin is absolute; the governor then only watches and reports. The
+//! backquote key releases the pin. The title bar shows the level in
+//! force either way. (These are quality controls, not time controls:
+//! the no-time-controls law stands.)
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -310,6 +318,10 @@ impl App {
                         .create_view(&c35::wgpu::TextureViewDescriptor::default());
                     renderer.render(&view, &pose, &world, time);
                     frame.present();
+                    // The governor eats the frame's wall time (vsync-bound
+                    // on a real display — a healthy 60 Hz machine sits at
+                    // target and the ladder simply never needs to move).
+                    renderer.observe_frame_ms(dt as f64 * 1000.0);
                     self.frame_count += 1;
 
                     // The ledger rides the title bar.
@@ -326,9 +338,17 @@ impl App {
                             String::new()
                         };
                         let season = dominant_season(&world);
+                        let gov = {
+                            let g = renderer.governor();
+                            if g.is_pinned() {
+                                format!("gov pinned L{}", g.level())
+                            } else {
+                                format!("gov L{}", g.level())
+                            }
+                        };
                         if let Some(window) = &self.window {
                             window.set_title(&format!(
-                                "Comigen — {:.1} ms/frame · {}{} · {} draws · {} · sun {:+.1}° · {}",
+                                "Comigen — {:.1} ms/frame · {}{} · {} draws · {} · sun {:+.1}° · {} · {}",
                                 self.frame_ema_ms,
                                 gpu,
                                 shadow,
@@ -336,6 +356,7 @@ impl App {
                                 renderer.backend_name(),
                                 world.sun_elevation_deg,
                                 season,
+                                gov,
                             ));
                         }
                     }
@@ -385,7 +406,7 @@ impl ApplicationHandler for App {
             self.size.1,
             self.scale,
         ));
-        renderer.resize(self.size.0, self.size.1, self.scale);
+        renderer.resize(self.size.0, self.size.1);
         self.window = Some(window);
         self.surface = Some(surface);
         self.renderer = Some(renderer);
@@ -406,7 +427,8 @@ impl ApplicationHandler for App {
         };
         println!("=== COMIGEN (windowed) ===");
         println!("backend          : {}", self.renderer.as_ref().unwrap().backend_name());
-        println!("anti-aliasing    : {}", self.renderer.as_ref().unwrap().aa_mode().describe());
+        println!("anti-aliasing    : {}", self.renderer.as_ref().unwrap().aa_description());
+        println!("governor         : live, target 16.7 ms (keys 0-4 pin a level, ` releases)");
         println!("clock source     : system clock (live, no pinning in the operator host)");
         println!("instant (UTC)    : {}", iso_utc(world.unix_seconds));
         println!("observer         : lat {lat_line}");
@@ -419,7 +441,7 @@ impl ApplicationHandler for App {
             "season           : cold {:.2} / autumn {:.2} / spring {:.2} / summer {:.2}",
             world.cold, world.autumn, world.spring, world.summer
         );
-        println!("controls         : drift until input · click = mouse capture · WASD/QE fly · Shift = speed · Esc = release · idle 8 s = drift returns");
+        println!("controls         : drift until input · click = mouse capture · WASD/QE fly · Shift = speed · Esc = release · idle 8 s = drift returns · 0-4 = governor pin · ` = unpin");
         self.world = Some(world);
     }
 
@@ -434,7 +456,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 self.size = (size.width.max(1), size.height.max(1));
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(self.size.0, self.size.1, self.scale);
+                    renderer.resize(self.size.0, self.size.1);
                 }
                 self.configure_surface();
             }
@@ -458,6 +480,32 @@ impl ApplicationHandler for App {
                         self.grab(false);
                     }
                     return;
+                }
+                // Governor pins: keys 0–4 pin ladder levels 0–4, backquote
+                // releases. Pinning is not camera input — it must not take
+                // the camera off the drift.
+                if state == ElementState::Pressed {
+                    let pin = match code {
+                        KeyCode::Digit0 => Some(Some(0)),
+                        KeyCode::Digit1 => Some(Some(1)),
+                        KeyCode::Digit2 => Some(Some(2)),
+                        KeyCode::Digit3 => Some(Some(3)),
+                        KeyCode::Digit4 => Some(Some(4)),
+                        KeyCode::Backquote => Some(None),
+                        _ => None,
+                    };
+                    if let Some(level) = pin {
+                        if let Some(renderer) = &mut self.renderer {
+                            renderer.pin_governor(level);
+                            match level {
+                                Some(l) => println!(
+                                    "[governor] pinned at level {l} — it will only watch and report"
+                                ),
+                                None => println!("[governor] pin released — governing live"),
+                            }
+                        }
+                        return;
+                    }
                 }
                 self.touch();
                 match state {

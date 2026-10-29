@@ -29,11 +29,13 @@ tell:
    Every run prints a **cost ledger**: frame time, GPU pass time (where the
    backend exposes timestamp queries), draw calls, triangles, internal
    render scale, and tracked memory. No claim without a number.
-4. **Resolution scale as a first-class knob.** The scene renders to an
-   offscreen target at a configurable internal scale and reconstructs up —
-   since M2 with jittered-projection temporal AA (TAA) where the backend
-   carries it, FXAA on the WebGL2 fallback path; each ledger states which
-   anti-aliasing actually ran.
+4. **Resolution scale as a first-class knob — and a governor that turns
+   it.** The scene renders to an offscreen target at an internal scale
+   and is *temporally reconstructed* back to output resolution (jittered
+   frames + history resolve; FXAA on the WebGL2 fallback path — each
+   ledger states which actually ran). Since M3 a **quality governor**
+   holds frame time against a target and sheds the engine's own ranked
+   costs before it ever drops a frame it could have afforded.
 5. **One tree, every target.** Rust + [wgpu](https://wgpu.rs): Vulkan /
    Metal / DX12 natively, WebGPU / WebGL2 in the browser — the same engine
    crate, the same world seed, the same frame, everywhere. Native and
@@ -103,6 +105,49 @@ never by the engine crate, and never exposed in any UI. It exists so a
 run can be pinned, measured and audited, the same standing as the hero
 camera pose.
 
+## The engine core (M3)
+
+M3 turns the renderer into an engine core, in three systems:
+
+- **A data-oriented core (ECS + job pool).** The scene lives in flat
+  typed component arenas — camera, world state, terrain tiles, water,
+  sky — with named systems over them (`reality-bind`, `visibility`) and
+  a small std-thread job pool for batch work. No hash maps in the scene
+  graph, no per-frame allocation in the update path. On targets with no
+  threads (wasm32) the pool degrades to inline execution; the core
+  never *requires* parallelism.
+- **Tiled terrain with culling + LOD.** The heightfield is a 4×4 tile
+  grid; each frame the visibility system frustum-culls tiles against
+  the camera and picks an index-density LOD per tile by distance
+  (borders share vertices across densities; reduced levels carry skirts
+  and neighbours stay within one LOD step, so seams stay shut). The
+  shadow pass frustum-culls against the light too — but its casters
+  always draw at full density: a reduced caster erodes thin
+  self-shadows, a defect the M3 winter proof caught and convicted.
+  Every ledger prints tiles drawn/culled and triangles before/after.
+- **Temporal reconstruction.** Where M2's TAA resolved at the internal
+  resolution, M3's history resolve writes at *output* resolution: the
+  scene renders at the governor's internal scale (0.70 in the A/B
+  proof) and the jittered-frame history blend reconstructs the output
+  image — in the M3 A/B, GPU scene time fell 41% (llvmpipe) for an
+  image whose broad shading and silhouettes hold; the finest
+  high-frequency detail is where reconstruction spends its honesty.
+- **The quality governor.** An exponential moving average of frame time
+  is held against a target (16.7 ms). Over budget, the governor steps
+  down a ranked ladder — render scale 1.00 → 0.85 → 0.70 → 0.55, then
+  shadow map 2048 → 1024 → off, then terrain detail reach, then water
+  wave octaves — one step per evaluation cadence with cooldowns, and
+  steps back up only on deep, sustained headroom. It cannot hunt.
+  **Pin law:** an operator may pin a level (windowed host keys 0–4,
+  headless `--pin-level`); while pinned the governor *observes and
+  reports* overruns and never acts — the operator's word stands, and
+  the ledger says so. In the M3 proof drive on the software renderer
+  (frame ≈195 ms at full quality — twelve times over target) the
+  governor walked the whole ladder in 540 frames and halved the frame
+  time to ≈99 ms, then reported the ladder's floor honestly: on a CPU
+  rasterizer, 16.7 ms is not in the building. On real hardware the same
+  ledger is where the truth will show.
+
 ## Milestones
 
 **M1 — the vista.** One deterministic procedural island: a generated
@@ -129,6 +174,22 @@ vista cost 4 draw calls and a few MiB of tracked GPU memory.
   which anti-aliasing actually ran.
 - **A windowed host** (`hosts/windowed`): the vista live in a real
   window — drift orbit until you touch it, then free-fly. See below.
+
+**M3 — the engine core: ECS + jobs, temporal reconstruction, the
+governor, tiled culling.**
+
+- The data-oriented core and the governor above: the scene is
+  components and systems, the frame is cost-accounted *and*
+  self-governing, and the resolve reconstructs output resolution from
+  the governor's internal scale.
+- The terrain is tiled (4×4) with per-tile frustum culling and distance
+  LOD in both passes — at the hero pose the camera pass submits 45,568
+  of the 131,072 full-density triangles; the shadow pass keeps its
+  casters at full density on purpose (see the core section).
+- The headwall art debt from M2 is addressed in the rock band itself:
+  wall-scale mottling, deeper strata, a cool cast in shadowed rock,
+  talus aprons — and the frozen bay's glint no longer stripes: the ice
+  roughens its own normals and the glint breaks into sparkle.
 
 An M2 ledger, from the headless proof host (winter morning pinned by the
 measurement rig at Chicago's latitude):
@@ -164,7 +225,7 @@ hardware the same ledger is the first thing to look at.)
 ## Workspace layout
 
 ```
-crates/c35/          the engine (renderer core, world/reality layer, scene, noise, shaders)
+crates/c35/          the engine (ECS core, governor, renderer, world/reality layer, scene, noise, shaders)
 hosts/native/        headless proof host: offscreen run, ledger, hero PNG
 hosts/windowed/      windowed host: the vista live, free-fly camera, title-bar ledger
 hosts/web/           browser host: same vista on a canvas, on-page ledger
@@ -183,7 +244,10 @@ COMIGEN_LAT=41.88 cargo run --release -p comigen-windowed
 Camera: the vista drifts until you touch it. Click to capture the mouse;
 WASD/QE fly, Shift is speed, Esc releases. Leave it alone for 8 seconds
 and the drift takes the camera back. The cost ledger rides in the title
-bar; the full reality reading prints to stdout at startup.
+bar; the full reality reading prints to stdout at startup. The quality
+governor governs live in this host — keys **0–4** pin ladder levels
+**0–4** (a pin is absolute; the governor then only watches and reports),
+**`** releases the pin; the title bar shows the level in force.
 
 ### On a Mac (Apple silicon)
 
@@ -206,7 +270,10 @@ Headless proof host:
 ```sh
 COMIGEN_LAT=41.88 COMIGEN_LON=-87.63 \
   cargo run --release -p comigen-native -- --frames 120 --out hero.png
-# options: --width 1280 --height 720 --scale 0.65 --drift
+# options: --width 1280 --height 720 --scale 1.0 --drift
+#          --pose hero|grazing (the culling proof pose)
+#          --pin-level N (governor pin; default 0) · --governor (live)
+#          --target-ms 16.7 (governor target)
 # measurement rig only: COMIGEN_PIN_ISO=2026-01-15T08:00:00-06:00 pins the instant
 ```
 
@@ -235,12 +302,14 @@ actually rendered (and which AA it ran: WebGL2 carries FXAA, not TAA).
 
 ## Status
 
-M2: reality layer + shadows + terrain detail + TAA/FXAA + windowed host,
-proven on native (offscreen and windowed-under-Xvfb) and in headless
-Chromium from this tree. All numbers here are still software-renderer
-numbers (llvmpipe / SwiftShader) — architecture proof, not hardware
-benchmarks. The first real-GPU witness will be an Apple M1 running the
-windowed host: Metal timestamps feed the same ledger.
+M3: ECS/job core + temporal reconstruction + quality governor +
+tiled culling/LOD + the headwall/ice art pass, proven on native
+(offscreen, and windowed under Xvfb) and in headless Chromium from
+this tree — including the M2 reality matrix re-run to the decimal.
+All numbers here are still software-renderer numbers (llvmpipe /
+SwiftShader) — architecture proof, not hardware benchmarks. The first
+real-GPU witness will be an Apple M1 running the windowed host: Metal
+timestamps feed the same ledger.
 
 ## License
 
