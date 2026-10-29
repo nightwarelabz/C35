@@ -129,23 +129,33 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
     let view_dir = to_cam / max(dist, 0.001);
     let fade = detail_fade(dist);
 
+    // M6 PS1.5: the surface regime is re-expressed at a coarse texel
+    // scale — the detail fields below sample a position snapped to a
+    // 1.25-unit grid, so grain, mottling and strata resolve as chunky
+    // facets of colour instead of fine noise. This is the palette
+    // regime working at the surface level, not a geometry effect:
+    // positions, normals and heights are never touched (no wobble).
+    // The mix is exact at 0.0 — classic sampling is bit-identical.
+    let snapped = vec3<f32>(floor(wp.x / 1.25) * 1.25, wp.y, floor(wp.z / 1.25) * 1.25);
+    let wpg = mix(wp, snapped, step(0.5, u.present.x));
+
     // Grain field, computed once and shared by albedo + normal work.
-    let grain = vnoise2(wp.xz * 0.55) * fade + vnoise(wp.xz * 0.05) * 0.35 * (1.0 - fade);
+    let grain = vnoise2(wpg.xz * 0.55) * fade + vnoise(wpg.xz * 0.05) * 0.35 * (1.0 - fade);
 
     // Normal perturbation from the grain gradient: near slopes stop
     // reading as smooth plastic. Fades with distance (no shimmer).
     var n = normalize(in.normal);
     if (fade > 0.01) {
         let e = 0.45;
-        let g0 = vnoise2(wp.xz * 0.55);
-        let gx = vnoise2((wp.xz + vec2<f32>(e, 0.0)) * 0.55);
-        let gz = vnoise2((wp.xz + vec2<f32>(0.0, e)) * 0.55);
+        let g0 = vnoise2(wpg.xz * 0.55);
+        let gx = vnoise2((wpg.xz + vec2<f32>(e, 0.0)) * 0.55);
+        let gz = vnoise2((wpg.xz + vec2<f32>(0.0, e)) * 0.55);
         let grad = vec2<f32>(gx - g0, gz - g0) / e;
         let strength = 0.16 * fade * smoothstep(0.25, 0.75, n.y);
         n = normalize(n + vec3<f32>(-grad.x, 0.0, -grad.y) * strength);
     }
 
-    let albedo = terrain_albedo(wp, n, grain, fade);
+    let albedo = terrain_albedo(wpg, n, grain, fade);
 
     // Wrapped diffuse for the sun (a little light wraps the forms), with
     // the real shadow map on the sun term only. The shadow factor fades
@@ -185,5 +195,5 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
     col += u.moon_color.rgb * mspec * 0.4;
 
     col = apply_fog(col, wp);
-    return vec4<f32>(col, 1.0);
+    return vec4<f32>(ps15_grade(col, in.clip.xy), 1.0);
 }

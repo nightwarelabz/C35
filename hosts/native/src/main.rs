@@ -17,11 +17,20 @@
 //!
 //! Usage: comigen-native [--width 1280] [--height 720] [--frames 120]
 //!        [--scale 1.0] [--out hero.png] [--drift]
-//!        [--pose hero|grazing]
+//!        [--pose hero|grazing|op-a|op-b]
 //!        [--pin-level N | --governor] [--target-ms 16.7]
 //!        [--cull cpu|gpu] [--save-at 60,120] [--start-level N]
 //!        [--drift-rate R]  (rig-only: multiply the drift clock by R;
 //!        the M5 fast-pan stress. Shipped runs never set it.)
+//!        [--present classic|ps15] [--ps15-fog 2.0]
+//!        [--operator stand|aim|crouch]
+//!
+//! M6 rig seams: `--present ps15` selects the PS1.5 presentation
+//! (480p-class internal frame, palette grade, fog look multiplier
+//! via `--ps15-fog`); the classic path is the default and is
+//! bit-identical to M5. `--operator` places the procedural operator
+//! in the vista in a staged pose; `--pose op-a|op-b` are his proof
+//! cameras (they hold still; drift does not apply).
 //!
 //! M3 rig notes: the quality governor is **pinned at level 0 by
 //! default** in this host, so a proof run's output is a deterministic
@@ -191,6 +200,13 @@ fn main() {
     // M4 rig seams: culling path override, governor start level (for
     // the step-up proof), and per-frame PNG saves (for the motion A/B).
     let cull_arg = arg_value(&args, "--cull");
+    // M6 seams: presentation mode (+ its fog look parameter) and the
+    // operator's staged pose.
+    let present_arg = arg_value(&args, "--present");
+    let ps15_fog: f32 = arg_value(&args, "--ps15-fog")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2.0);
+    let operator_arg = arg_value(&args, "--operator");
     let start_level: Option<usize> =
         arg_value(&args, "--start-level").and_then(|v| v.parse().ok());
     let save_at: Vec<usize> = arg_value(&args, "--save-at")
@@ -222,6 +238,18 @@ fn main() {
         _ => {}
     }
 
+    // Presentation + operator (also before any frame, governor
+    // setup below): the mode re-sizes the targets once here.
+    if present_arg.as_deref() == Some("ps15") {
+        renderer.set_present_mode(c35::PresentMode::Ps15, ps15_fog);
+    }
+    match operator_arg.as_deref() {
+        Some("stand") => renderer.set_operator(Some(c35::OperatorPose::StandReady)),
+        Some("aim") => renderer.set_operator(Some(c35::OperatorPose::Aim)),
+        Some("crouch") => renderer.set_operator(Some(c35::OperatorPose::Crouch)),
+        _ => {}
+    }
+
     // Governor setup (before any frame): target, then pin or live.
     if let Some(t) = target_ms {
         renderer.set_governor_target(t);
@@ -239,18 +267,20 @@ fn main() {
         format!("pinned at level {lvl}")
     };
 
-    // Proof pose: the hero pose (drift orbits it) or the fixed grazing
-    // pose where culling bites (drift does not apply there).
-    let fixed_pose = if pose_name == "grazing" {
-        c35::scene::GRAZING_POSE
-    } else {
-        c35::scene::HERO_POSE
+    // Proof pose: the hero pose (drift orbits it) or a fixed pose —
+    // the grazing pose where culling bites, or the operator cameras
+    // (drift does not apply to the fixed poses).
+    let fixed_pose = match pose_name.as_str() {
+        "grazing" => c35::scene::GRAZING_POSE,
+        "op-a" => c35::operator::OP_CAM_A,
+        "op-b" => c35::operator::OP_CAM_B,
+        _ => c35::scene::HERO_POSE,
     };
     let pose_at = |t: f32| -> c35::scene::CameraPose {
-        if pose_name == "grazing" {
-            fixed_pose
-        } else {
+        if pose_name == "hero" {
             c35::scene::camera_at(t)
+        } else {
+            fixed_pose
         }
     };
 
@@ -316,8 +346,7 @@ fn main() {
     save_png(&renderer, &out_tex, width, height, &out);
 
     // ---- the cost ledger ----
-    let iw = ((width as f32 * renderer.render_scale()) as u32).max(1);
-    let ih = ((height as f32 * renderer.render_scale()) as u32).max(1);
+    let (iw, ih) = renderer.internal_size();
     println!("=== COMIGEN COST LEDGER (native, headless offscreen) ===");
     println!("backend          : {}", renderer.backend_name());
     println!("output           : {width}x{height}");
@@ -327,6 +356,13 @@ fn main() {
         iw,
         ih
     );
+    println!("presentation     : {}", renderer.present_description());
+    if renderer.operator_triangles() > 0 {
+        println!(
+            "operator         : placed, {} triangles (procedural build, generated atlas — no image assets)",
+            renderer.operator_triangles()
+        );
+    }
     println!("frames measured  : {frames} (after 10 warmup)");
     println!(
         "frame time       : mean {:.2} ms, p95 {:.2} ms  [frame-loop wall time: encode+submit+wait]",

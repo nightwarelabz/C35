@@ -272,6 +272,64 @@ M5 takes the two levers M4 named and left, in the open:
   does not have. That stress belongs to the milestone that builds
   the camera.
 
+## M6 — the PS1.5 pivot, and the operator
+
+M6 turns the engine toward its first game (DeBrief — a 1987
+stealth-action immersive sim) and its chosen register:
+**PlayStation 1.5 — better than PS1, not quite PS2.** Two builds:
+
+- **The PS1.5 render path** (`PresentMode::Ps15`, beside the classic
+  path — an added mode, never a replacement). The scene renders at a
+  480p-class internal frame (at 1280×720 out: 853×480, aspect
+  preserved), the history resolve runs at that same presentation
+  resolution (the mode is a register, not an upsampling trick), and
+  the blit samples **nearest** — a crisp texel grid on the output.
+  Surfaces re-express through the palette discipline: terrain and
+  water detail fields sample a 1.25-unit snapped texel grid, and
+  every scene fragment exits through a palette grade — 20 steps per
+  channel in sqrt space, ordered-dithered 4×4 Bayer so the steps
+  break into texture instead of banding. Fog density becomes a look
+  parameter (default ×2.0 — the reality layer's density, multiplied
+  by the presentation's own factor), and the night sky gains the
+  banner's sodium shore: a warm, lumpy lamp band on the horizon that
+  exists only in the dark and answers to the same fog as everything
+  else. There is **no vertex wobble and no affine warp anywhere, in
+  either mode** — the chunk is resolution and palette, by doctrine;
+  both are forbidden as defect and as fake-retro effect alike. On
+  this software renderer the payoff is the doctrine's own numbers:
+  winter hero frame-loop mean 430.15 ms classic → 125.13 ms PS1.5,
+  GPU scene pass 215.80 → 56.91 ms, tracked VRAM 34.31 → 26.49 MiB —
+  and the classic path is provably untouched: its winter frame is
+  byte-identical to M5's (sha256 `c3d0525f…`), its grazing CPU/GPU
+  parity hash is M5's own, and the reality matrix re-reads to the
+  decimal on all four season pins. The web host carries the mode
+  behind the same rig-seam class as its clock pin
+  (`window.__comigen_present = "ps15"`).
+- **The operator** (`crates/c35/src/operator.rs`) — the character
+  pipeline, and DeBrief's protagonist as an engine citizen. Built
+  procedurally, geometry and generated surfaces only: 113 rigid
+  parts over a 15-bone skeleton, **1,346 triangles**, surfaced from
+  a 256² atlas the engine paints itself (digital camo, vest webbing,
+  skin, the visor's gradient with its hot point, and the NSA
+  shoulder patch drawn as low-res surface art — eagle, striped
+  shield, bitmap letters). Three references govern him: the bust
+  portrait for face and visor, the banner for pose and night grade,
+  and the full-body model sheet for proportions and everything
+  below the chest — the sheet arrived after the first build and
+  corrected it (longer legs, tall lace-up boots, capped knee pads,
+  the drop-leg holster rig, the belt pouch row, a radio pack that
+  clears the shoulders with two whips). Posing is rigid skinning,
+  evaluated on the CPU when a host asks; three staged poses ship —
+  stand-ready, crouch, aim — with the shoulder/elbow seams where
+  aim and a future grapple-reach need them. He draws into the vista
+  lit by the same reality layer and casts into the shadow map
+  (winter day proof: shadow pass 16 → 17 draw calls, 131,072 →
+  132,418 triangles — his exact weight, accounted). The governor's
+  pin law holds in both presentations (300 pinned overruns, 0
+  adjustments, classic and PS1.5 alike); live on this renderer both
+  modes walk the ladder to its floor — measured, and reported
+  un-tuned in the M6 report.
+
 ## Milestones
 
 **M1 — the vista.** One deterministic procedural island: a generated
@@ -403,6 +461,10 @@ COMIGEN_LAT=41.88 COMIGEN_LON=-87.63 \
 #          --start-level N (with --governor: ladder start, for the
 #            step-up proof) · --save-at 60,150,239 (extra frame saves)
 #          --target-ms 16.7 (governor target)
+#          --present classic|ps15 (M6 presentation; classic default)
+#          --ps15-fog 2.0 (the PS1.5 fog look multiplier)
+#          --operator stand|aim|crouch (place the operator, staged pose)
+#          --pose op-a|op-b (his proof cameras)
 # measurement rig only: COMIGEN_PIN_ISO=2026-01-15T08:00:00-06:00 pins the instant
 ```
 
@@ -431,22 +493,26 @@ actually rendered (and which AA it ran: WebGL2 carries FXAA, not TAA).
 
 ## Status
 
-M5: fold occlusion baked per-vertex from the height field (the
-headwall's shadowed folds gain their missing term; verdict improved,
-not cured, with the bounds measured), and the temporal
-reconstruction stress-tested to 16× the drift rate with no fix
-convicted — on top of M4 (cliff relief, GPU compute culling with
-CPU/GPU byte-parity, the governor's step-up proven live), the M3
-core (ECS/jobs, temporal reconstruction, governor, tiled
-culling/LOD) and the M2 reality layer, re-run to the decimal in
-M5's regression (all four seasons). Proven on native (offscreen,
-and windowed under Xvfb) from this tree; the wasm32 build is green
-and the web package regenerated, but M5's headless-Chromium drive
-is still owed: this sandbox's Chromium now refuses direct spawn
-("Hatch WebGL domain policy is required" — the policy is supplied
-by the browser daemon, not by any flag), so the winter + live web
-proofs run in a policy-equipped browser context, not from the
-proof shell. The M5 report has the whole record. All numbers here are still
+M6: the PS1.5 presentation mode (480p-class internal frame,
+snapped texel surfaces, dithered palette grade, fog as a look
+parameter, nearest presentation) beside a classic path that is
+byte-identical to M5 — and the operator, DeBrief's protagonist,
+standing in the vista as a procedural build (1,346 triangles,
+generated atlas, three staged poses, shadow-casting) — on top of
+M5 (fold occlusion; motion reconstruction stress-tested, no fix
+convicted), M4 (cliff relief, GPU compute culling with CPU/GPU
+byte-parity, the governor's step-up proven live), the M3 core
+(ECS/jobs, temporal reconstruction, governor, tiled culling/LOD)
+and the M2 reality layer, re-run to the decimal in M6's regression
+(all four seasons). Proven on native (offscreen, and windowed
+under Xvfb) from this tree; the wasm32 build is green and the web
+package regenerated, but the headless-Chromium web drive is still
+owed: M6's single attempt met the same wall as M5's — this
+sandbox's Chromium refuses direct spawn ("Hatch WebGL domain
+policy is required" — the policy is supplied by the browser
+daemon, not by any flag; the drive died before a CDP endpoint
+existed), so the web proofs run in a policy-equipped browser
+context, not from the proof shell. The M6 report has the whole record. All numbers here are still
 software-renderer numbers (llvmpipe / SwiftShader) — architecture
 proof, not hardware benchmarks. The first real-GPU witness will be
 an Apple M1 running the windowed host: Metal timestamps feed the

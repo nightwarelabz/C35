@@ -23,6 +23,9 @@
 //! There are no time or season controls on this page. The only pinning
 //! seam is `window.__comigen_pin_unix`, settable solely by the proof rig
 //! before the module loads — it is a measurement instrument, not a UI.
+//! M6 adds one more rig seam of the same class: `window.__comigen_present`
+//! set to "ps15" before the module loads selects the PS1.5 presentation
+//! for the proof drive; the shipped page never sets it.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -190,6 +193,16 @@ async fn run() {
     );
     set_text("backend", &renderer.backend_name());
 
+    // The rig's presentation seam (proof runs only; nothing on the
+    // page sets this): "ps15" selects the PS1.5 register with its
+    // default fog look multiplier.
+    let present_arg = js_sys::Reflect::get(&window, &JsValue::from_str("__comigen_present"))
+        .ok()
+        .and_then(|v| v.as_string());
+    if present_arg.as_deref() == Some("ps15") {
+        renderer.set_present_mode(c35::PresentMode::Ps15, 2.0);
+    }
+
     let perf = window.performance().unwrap();
     let state = Rc::new(RefCell::new(State {
         frames: 0,
@@ -268,6 +281,7 @@ async fn run() {
                      backend          : {}\n\
                      output           : {}x{}\n\
                      render scale     : {:.2}\n\
+                     presentation     : {}\n\
                      frames rendered  : {}\n\
                      frame time       : mean {:.2} ms, p95 {:.2} ms  [frame-loop wall time between rAF callbacks]\n\
                      {}\n\
@@ -289,6 +303,7 @@ async fn run() {
                     WIDTH,
                     HEIGHT,
                     renderer.render_scale(),
+                    renderer.present_description(),
                     st.frames,
                     c35::mean(&deltas),
                     c35::percentile(&deltas, 95.0),

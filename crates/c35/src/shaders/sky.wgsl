@@ -32,5 +32,5 @@ fn fs_main(in: SkyOut) -> @location(0) vec4<f32> {
     }
     // Subtle dither against gradient banding.
     col += (hash21(in.ndc * 731.7) - 0.5) * 0.008;
-    return vec4<f32>(col, 1.0);
+    return vec4<f32>(ps15_grade(col, in.clip.xy), 1.0);
 }
