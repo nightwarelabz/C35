@@ -29,6 +29,18 @@
 //! (the CPU system still owns the shadow list, and is the whole story
 //! on WebGL2). Every ledger names which culling ran.
 //!
+//! M6 is the PS1.5 pivot: a first-class low-resolution presentation
+//! mode ([`PresentMode`]) beside the classic path — the scene renders
+//! at a 480p-class internal frame, surfaces are re-expressed through
+//! a snapped texel grid and a dithered palette grade, fog becomes a
+//! look parameter, and the frame is presented with nearest sampling
+//! (a crisp texel grid; no vertex wobble, no affine warp, anywhere).
+//! The classic path is an added mode's neighbour, not its victim: its
+//! output is bit-identical. M6 also stands up the character pipeline
+//! ([`operator`]): DeBrief's operator, built procedurally — box-part
+//! geometry over a small skeleton, a generated texture atlas, three
+//! staged poses — rendered into the vista and shadowed like terrain.
+//!
 //! The house law: **if it costs, it shows.** Every frame is counted —
 //! draw calls per pass, triangles, render scale, tracked memory, frame
 //! time, and GPU pass times where the backend exposes timestamp queries.
@@ -36,6 +48,7 @@
 pub mod ecs;
 pub mod governor;
 pub mod noise;
+pub mod operator;
 pub mod scene;
 pub mod vista;
 pub mod world;
@@ -43,6 +56,7 @@ pub mod world;
 /// Re-exported so hosts build against exactly the engine's wgpu.
 pub use wgpu;
 pub use pollster;
+pub use operator::OperatorPose;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -94,6 +108,8 @@ struct Uniforms {
     water_p: [f32; 4],
     misc: [f32; 4],
     quality: [f32; 4],
+    /// M6 presentation: mode flag, PS1.5 fog multiplier, palette steps.
+    present: [f32; 4],
 }
 
 #[repr(C)]
@@ -251,6 +267,11 @@ struct Targets {
     scale: f32,
     internal_w: u32,
     internal_h: u32,
+    /// The reconstruction pair's size: the output size in classic
+    /// mode (the resolve is the upsampler), the internal size in
+    /// PS1.5 mode (the resolve runs at presentation resolution).
+    res_w: u32,
+    res_h: u32,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     /// TAA: the history texture (previous resolved frame) + its view.
@@ -282,6 +303,31 @@ pub enum CullMode {
     Cpu,
     Gpu,
 }
+
+/// M6: which presentation the frame is rendered and shown through.
+///
+/// `Classic` is the M1–M5 path, bit-identical, always available.
+/// `Ps15` is the PS1.5 register: the scene renders at a 480p-class
+/// internal frame (see [`PS15_MAX_W`]/[`PS15_MAX_H`]), the history
+/// resolve runs at that same presentation resolution (the mode is a
+/// *register*, not an upsampling trick), surfaces sample through the
+/// snapped texel grid, every scene fragment passes the palette grade
+/// (shaders/common.wgsl), fog density takes the mode's look
+/// multiplier, and the final blit samples nearest — a crisp texel
+/// grid on the output. No vertex wobble, no affine warp: the chunk
+/// is resolution and palette, by doctrine.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PresentMode {
+    Classic,
+    Ps15,
+}
+
+/// The PS1.5 internal frame class: 480p — 854×480 at 16:9. The cap
+/// preserves the output's aspect; it is a ceiling, not a stretch.
+pub const PS15_MAX_W: u32 = 854;
+pub const PS15_MAX_H: u32 = 480;
+/// Palette steps per channel in the PS1.5 grade (sqrt-space).
+pub const PS15_PALETTE_STEPS: f32 = 20.0;
 
 /// GPU mirror of the cull shader's TileParam (shaders/cull.wgsl).
 #[repr(C)]
@@ -399,8 +445,24 @@ pub struct Renderer {
     resolved_view: Option<wgpu::TextureView>,
     shadow_attach: Option<(wgpu::Texture, Arc<wgpu::TextureView>)>,
     blit_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
     shadow_bytes: u64,
+    /// M6 presentation mode + its fog look multiplier.
+    present_mode: PresentMode,
+    ps15_fog_mul: f32,
+    /// M6 operator apparatus: pipelines + the atlas bind group are
+    /// built once; the posed geometry is uploaded per `set_operator`.
+    operator_pipeline: wgpu::RenderPipeline,
+    operator_depth_pipeline: wgpu::RenderPipeline,
+    operator_bind_group: wgpu::BindGroup,
+    /// Kept so the atlas texture outlives build() (its view lives in
+    /// the bind group above).
+    #[allow(dead_code)]
+    operator_atlas_tex: wgpu::Texture,
+    operator_bufs: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    operator_tris: u64,
+    operator_bytes: u64,
     /// M4: all tiles live in ONE vertex buffer and ONE index buffer
     /// (every LOD of every tile), so an indirect draw can address any
     /// tile/LOD by first_index alone (indices are absolute) — the
@@ -706,6 +768,14 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        // M6: the PS1.5 presentation sampler — nearest, so the low
+        // internal frame lands on the output as a crisp texel grid.
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("ps15 nearest sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("linear sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -785,6 +855,92 @@ impl Renderer {
             (None, buf)
         };
 
+        // ---- M6 operator apparatus: the generated atlas, uploaded
+        // once, and its bind group (group 1 beside the scene group).
+        // The pipelines are built with the others below; the posed
+        // geometry arrives per set_operator() call. ----
+        let atlas_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("operator atlas"),
+            size: wgpu::Extent3d {
+                width: operator::ATLAS_SIZE,
+                height: operator::ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &atlas_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &operator::generate_atlas(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(operator::ATLAS_SIZE * 4),
+                rows_per_image: Some(operator::ATLAS_SIZE),
+            },
+            wgpu::Extent3d {
+                width: operator::ATLAS_SIZE,
+                height: operator::ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        let atlas_view = atlas_tex.create_view(&Default::default());
+        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("operator atlas sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("operator atlas layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let operator_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("operator bind group"),
+            layout: &atlas_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&atlas_sampler),
+                },
+            ],
+        });
+        let operator_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("operator pipeline layout"),
+                bind_group_layouts: &[&scene_layout, &atlas_layout],
+                push_constant_ranges: &[],
+            });
+
         // ---- pipelines ----
         let sky_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky"),
@@ -806,6 +962,12 @@ impl Renderer {
             label: Some("depth"),
             source: wgpu::ShaderSource::Wgsl(
                 shader_src(include_str!("shaders/depth.wgsl")).into(),
+            ),
+        });
+        let operator_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("operator"),
+            source: wgpu::ShaderSource::Wgsl(
+                shader_src(include_str!("shaders/operator.wgsl")).into(),
             ),
         });
         let blit_shader = if aa_mode == AaMode::Fxaa {
@@ -971,6 +1133,97 @@ impl Renderer {
             multiview: None,
             cache: None,
         });
+
+        // M6 operator pipelines: the colour pass (scene group + atlas
+        // group) and the shadow-caster variant (uniform-only depth
+        // group, the terrain depth pipeline's own discipline: front
+        // faces culled, same bias).
+        let op_vb_layout = [wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<operator::OperatorVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 12,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 24,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 32,
+                    shader_location: 3,
+                },
+            ],
+        }];
+        let operator_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("operator pipeline"),
+            layout: Some(&operator_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &operator_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &op_vb_layout,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &operator_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &scene_color_target,
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let operator_depth_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("operator shadow depth pipeline"),
+                layout: Some(&depth_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &operator_module,
+                    entry_point: Some("vs_depth"),
+                    compilation_options: Default::default(),
+                    buffers: &op_vb_layout,
+                },
+                fragment: None,
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         let resolve_pipeline = if aa_mode == AaMode::Taa {
             let layout = resolve_layout.as_ref().unwrap();
@@ -1282,8 +1535,18 @@ impl Renderer {
             resolved_view: None,
             shadow_attach: None,
             blit_sampler,
+            nearest_sampler,
             linear_sampler,
             shadow_bytes,
+            present_mode: PresentMode::Classic,
+            ps15_fog_mul: 2.0,
+            operator_pipeline,
+            operator_depth_pipeline,
+            operator_bind_group,
+            operator_atlas_tex: atlas_tex,
+            operator_bufs: None,
+            operator_tris: 0,
+            operator_bytes: 0,
             merged_vb,
             merged_ib,
             tile_params,
@@ -1324,8 +1587,21 @@ impl Renderer {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.out_size = (width, height);
         let scale = (self.base_scale * self.quality.render_scale).clamp(0.25, 1.0);
-        let sw = ((width as f32 * scale) as u32).max(1);
-        let sh = ((height as f32 * scale) as u32).max(1);
+        let mut sw = ((width as f32 * scale) as u32).max(1);
+        let mut sh = ((height as f32 * scale) as u32).max(1);
+        // M6: the PS1.5 register caps the internal frame at its class
+        // (480p), aspect preserved. The governor's accounting is
+        // untouched — Targets.scale still reports the classic scale,
+        // and the cap applies on top of it, in this one place.
+        if self.present_mode == PresentMode::Ps15 {
+            let f = (PS15_MAX_H as f32 / sh as f32)
+                .min(PS15_MAX_W as f32 / sw as f32)
+                .min(1.0);
+            if f < 1.0 {
+                sw = ((sw as f32 * f).round() as u32).max(1);
+                sh = ((sh as f32 * f).round() as u32).max(1);
+            }
+        }
         let size = wgpu::Extent3d {
             width: sw,
             height: sh,
@@ -1361,10 +1637,19 @@ impl Renderer {
         // sized, so the resolve's per-output-pixel history blend is the
         // upsampler, and the blit after it is a straight copy (FXAA path
         // excepted: it blits the internal target directly, as before).
+        // M6: in PS1.5 mode the pair is sized at the INTERNAL frame
+        // instead — the resolve runs at presentation resolution and
+        // the blit's nearest sampler is the presenter, so nothing in
+        // the chain ever upsamples. Classic values are unchanged.
+        let (res_w, res_h) = if self.present_mode == PresentMode::Ps15 {
+            (sw, sh)
+        } else {
+            (width, height)
+        };
         let (blit_source_view, history_tex, extra_bytes) = if self.aa_mode == AaMode::Taa {
             let out_extent = wgpu::Extent3d {
-                width,
-                height,
+                width: res_w,
+                height: res_h,
                 depth_or_array_layers: 1,
             };
             let resolved = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -1392,10 +1677,18 @@ impl Renderer {
             (
                 resolved.create_view(&Default::default()),
                 Some((history, resolved)),
-                (width * height) as u64 * 8, // resolved + history, 4 B/px each
+                (res_w * res_h) as u64 * 8, // resolved + history, 4 B/px each
             )
         } else {
             (color_view.clone(), None, 0u64)
+        };
+        // The blit's sampler IS the presentation: linear in classic
+        // mode (a straight copy of an output-sized frame), nearest in
+        // PS1.5 mode (the crisp texel grid the register promises).
+        let present_sampler = if self.present_mode == PresentMode::Ps15 {
+            &self.nearest_sampler
+        } else {
+            &self.blit_sampler
         };
         let blit_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit bind group"),
@@ -1407,7 +1700,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.blit_sampler),
+                    resource: wgpu::BindingResource::Sampler(present_sampler),
                 },
             ],
         });
@@ -1456,6 +1749,8 @@ impl Renderer {
             scale,
             internal_w: sw,
             internal_h: sh,
+            res_w,
+            res_h,
             color_view,
             depth_view,
             history_tex: history_tex.map(|(h, _)| h),
@@ -1563,6 +1858,93 @@ impl Renderer {
             }
             CullMode::Cpu => "CPU visibility system",
         }
+    }
+
+    /// M6: choose the presentation mode. `fog_mul` is the PS1.5 look
+    /// parameter (the fog density multiplier, classic 1.0 = the
+    /// reality layer's own density); it is inert in classic mode.
+    /// Switching re-sizes the targets at once. Hosts set this before
+    /// their warmup frames, like the cull mode.
+    pub fn set_present_mode(&mut self, mode: PresentMode, fog_mul: f32) {
+        self.present_mode = mode;
+        self.ps15_fog_mul = fog_mul.max(0.0);
+        let (w, h) = self.out_size;
+        self.resize(w, h);
+    }
+
+    pub fn present_mode(&self) -> PresentMode {
+        self.present_mode
+    }
+
+    /// The internal frame's size — the number the PS1.5 payoff is
+    /// measured in (and, in classic mode, exactly the governor-scaled
+    /// size it has always been).
+    pub fn internal_size(&self) -> (u32, u32) {
+        self.targets
+            .as_ref()
+            .map(|t| (t.internal_w, t.internal_h))
+            .unwrap_or(self.out_size)
+    }
+
+    /// The honest one-liner every ledger prints about presentation.
+    pub fn present_description(&self) -> String {
+        match self.present_mode {
+            PresentMode::Classic => {
+                "classic (full internal frame, linear presentation)".to_string()
+            }
+            PresentMode::Ps15 => {
+                let (iw, ih) = self.internal_size();
+                format!(
+                    "PS1.5 (internal {}x{} capped at {}x{}, palette {:.0} steps, fog x{:.1}, nearest presentation)",
+                    iw, ih, PS15_MAX_W, PS15_MAX_H, PS15_PALETTE_STEPS, self.ps15_fog_mul
+                )
+            }
+        }
+    }
+
+    /// M6: place the operator in the vista (or remove him with
+    /// `None`). The pose is evaluated and skinned on the CPU and the
+    /// world-space geometry uploaded; he then draws with the scene
+    /// and casts into the shadow map like terrain. His spot and
+    /// facing are the pipeline's proof placement (operator module).
+    pub fn set_operator(&mut self, pose: Option<OperatorPose>) {
+        match pose {
+            None => {
+                self.operator_bufs = None;
+                self.operator_tris = 0;
+                self.operator_bytes = 0;
+            }
+            Some(p) => {
+                let ground =
+                    scene::height_at(operator::OPERATOR_SPOT.0, operator::OPERATOR_SPOT.1);
+                let mesh = operator::build_operator(
+                    p,
+                    Vec3::new(operator::OPERATOR_SPOT.0, 0.0, operator::OPERATOR_SPOT.1),
+                    ground,
+                    operator::OPERATOR_YAW_DEG,
+                );
+                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("operator vertices"),
+                    contents: bytemuck::cast_slice(&mesh.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("operator indices"),
+                    contents: bytemuck::cast_slice(&mesh.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                self.operator_tris = mesh.triangle_count();
+                self.operator_bytes = (mesh.vertices.len()
+                    * std::mem::size_of::<operator::OperatorVertex>()
+                    + mesh.indices.len() * 4) as u64;
+                self.operator_bufs = Some((vb, ib, mesh.indices.len() as u32));
+            }
+        }
+    }
+
+    /// Triangles the operator contributes when placed (0 when absent).
+    pub fn operator_triangles(&self) -> u64 {
+        self.operator_tris
     }
 
     /// Drain collected GPU cull-pass durations (empty unless the GPU
@@ -1680,6 +2062,12 @@ impl Renderer {
     /// What anti-aliasing / reconstruction actually ran, at the current
     /// quality state — the honest string every ledger prints.
     pub fn aa_description(&self) -> String {
+        // M6: in PS1.5 mode the resolve runs at presentation
+        // resolution — saying "at output resolution" would be a lie
+        // the ledger must not tell.
+        if self.present_mode == PresentMode::Ps15 && self.aa_mode == AaMode::Taa {
+            return "TAA (jitter + history resolve at presentation resolution)".to_string();
+        }
         match self.aa_mode {
             AaMode::Taa => {
                 let s = self.render_scale();
@@ -1702,6 +2090,8 @@ impl Renderer {
         self.geometry_bytes
             + t
             + self.shadow_bytes
+            + self.operator_bytes
+            + (operator::ATLAS_SIZE as u64) * (operator::ATLAS_SIZE as u64) * 4
             + std::mem::size_of::<Uniforms>() as u64
             + std::mem::size_of::<ResolveUniforms>() as u64
     }
@@ -1737,7 +2127,7 @@ impl Renderer {
     /// Render one frame of the vista into `out_view`, lit and seasoned by
     /// `world` (the reality layer's reading for this instant and place).
     pub fn render(&mut self, out_view: &wgpu::TextureView, pose: &CameraPose, world: &WorldState, time: f32) {
-        let (internal_w, internal_h, aspect, out_w, out_h) = {
+        let (internal_w, internal_h, aspect, _out_w, _out_h) = {
             let t = self.targets.as_ref().expect("renderer sized");
             (
                 t.internal_w,
@@ -1858,6 +2248,19 @@ impl Renderer {
                 },
                 0.0,
             ],
+            // M6 presentation: x mode (0 classic / 1 PS1.5) · y fog
+            // look multiplier · z palette steps. In classic mode x is
+            // exactly 0.0 and every PS1.5 shader branch is inert.
+            present: [
+                if self.present_mode == PresentMode::Ps15 {
+                    1.0
+                } else {
+                    0.0
+                },
+                self.ps15_fog_mul,
+                PS15_PALETTE_STEPS,
+                0.0,
+            ],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
@@ -1943,6 +2346,15 @@ impl Renderer {
                 );
                 shadow_draws += 1;
             }
+            // M6: the operator casts too — one more depth draw with
+            // his own caster pipeline (same depth bind group).
+            if let Some((vb, ib, count)) = &self.operator_bufs {
+                pass.set_pipeline(&self.operator_depth_pipeline);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..*count, 0, 0..1);
+                shadow_draws += 1;
+            }
             draw_calls += shadow_draws;
         }
 
@@ -1997,9 +2409,21 @@ impl Renderer {
                     terrain_draws += 1;
                 }
             }
+            // M6: the operator draws after the terrain, before the
+            // water (he is opaque; the sea blends over his shore
+            // footing like it does over the sand).
+            let mut operator_draws = 0u32;
+            if let Some((vb, ib, count)) = &self.operator_bufs {
+                pass.set_pipeline(&self.operator_pipeline);
+                pass.set_bind_group(1, &self.operator_bind_group, &[]);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..*count, 0, 0..1);
+                operator_draws = 1;
+            }
             pass.set_pipeline(&self.water_pipeline);
             pass.draw(0..6, 0..1);
-            draw_calls += 1 + terrain_draws + 1;
+            draw_calls += 1 + terrain_draws + operator_draws + 1;
         }
         if self.cull_mode == CullMode::Gpu {
             if let Some(gc) = &self.gpu_cull {
@@ -2057,8 +2481,8 @@ impl Renderer {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::Extent3d {
-                    width: out_w,
-                    height: out_h,
+                    width: targets.res_w,
+                    height: targets.res_h,
                     depth_or_array_layers: 1,
                 },
             );
@@ -2114,11 +2538,12 @@ impl Renderer {
         self.last_shadow_draw_calls = shadow_draws;
         self.last_shadow_active = shadow_light;
         // Scene triangles: culled/LOD'd terrain + water (2) + sky (1) +
-        // blit (1). On the GPU path the terrain term is the readback
-        // snapshot (a frame behind while the camera moves; exact at
-        // any held pose).
-        self.last_tris = self.cull_stats().tris_after + 2 + 1 + 1;
-        self.last_shadow_tris = self.vista.cull.shadow_tris;
+        // blit (1) + the operator when placed. On the GPU path the
+        // terrain term is the readback snapshot (a frame behind while
+        // the camera moves; exact at any held pose).
+        self.last_tris = self.cull_stats().tris_after + 2 + 1 + 1 + self.operator_tris;
+        self.last_shadow_tris = self.vista.cull.shadow_tris
+            + if shadow_light { self.operator_tris } else { 0 };
     }
 }
 

@@ -24,6 +24,7 @@ struct Uniforms {
     water_p: vec4<f32>,     // x: ice · y: wave scale · z: star intensity · w: daylight
     misc: vec4<f32>,        // x: time s · y: shadow strength · z: render scale · w: aspect
     quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed)
+    present: vec4<f32>,     // M6: x: PS1.5 mode (0 classic / 1 PS1.5) · y: PS1.5 fog density multiplier · z: palette steps · w: unused
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -59,6 +60,19 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     let moon_amt = max(dot(dir, u.moon_dir.xyz), 0.0);
     col += u.moon_color.rgb * pow(moon_amt, 240.0) * 0.5;
     col += vec3<f32>(0.72, 0.78, 0.90) * smoothstep(0.99988, 0.99996, moon_amt) * u.moon_color.w;
+    // M6 (PS1.5 mode only): the banner's sodium shore — a warm band of
+    // far light riding the horizon, lumpy with lamp clusters. The
+    // reference frame is a lit dockyard city; this vista is an island,
+    // and this band is what the scene affords in its place: distant
+    // lit shore implied, never modelled. It obeys the reality layer —
+    // it exists only in the dark (water_p.w is daylight) and the fog
+    // the fog pass lays over it is the same fog as everything else.
+    if (u.present.x > 0.5) {
+        let lamps = 0.45 + 0.55 * vnoise(vec2<f32>(dir.x * 9.0 + dir.z * 7.0, 3.0));
+        let band = (1.0 - smoothstep(0.0, 0.09, abs(dir.y - 0.015)))
+            * (1.0 - u.water_p.w) * lamps;
+        col += vec3<f32>(1.0, 0.50, 0.15) * band * 0.14;
+    }
     return col;
 }
 
@@ -118,7 +132,12 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let rel = world_pos - u.cam_pos.xyz;
     let dist = length(rel);
     let dir = rel / max(dist, 0.001);
-    let f = 1.0 - exp(-dist * u.fog.w);
+    // M6: in PS1.5 mode the fog density is a look parameter — the
+    // presentation multiplies the reality layer's density by its own
+    // factor. The mix is exact at 0.0, so the classic path's fog is
+    // bit-for-bit the reality layer's, untouched.
+    let density = u.fog.w * mix(1.0, u.present.y, step(0.5, u.present.x));
+    let f = 1.0 - exp(-dist * density);
     let sun_amt = pow(max(dot(dir, u.sun_dir.xyz), 0.0), 5.0);
     let fog_col = u.fog.rgb + u.sun_glow.rgb * sun_amt * 0.30;
     return mix(col, fog_col, clamp(f, 0.0, 1.0));
@@ -145,4 +164,42 @@ fn vnoise(p: vec2<f32>) -> f32 {
 // Two-octave value noise — the terrain detail grain.
 fn vnoise2(p: vec2<f32>) -> f32 {
     return vnoise(p) * 0.65 + vnoise(p * 2.13 + 5.2) * 0.35;
+}
+
+// ---------------------------------------------------------------------
+// M6: the PS1.5 palette grade.
+//
+// The PS1.5 look is a PALETTE discipline, not a damage effect: colour
+// is posterized to a fixed number of steps per channel, ordered-
+// dithered with a 4×4 Bayer matrix so the steps break into texture
+// instead of banding. Quantization happens in sqrt space — the
+// frame's darks (where the banner's night lives) get more of the
+// steps than a linear posterize would give them. There is no vertex
+// wobble and no affine warp anywhere in this engine, in either mode:
+// the chunk of the look comes from the presentation resolution and
+// this palette, never from geometric noise (the PS1.5 direction
+// document forbids both, as defect and as fake-retro effect alike).
+// In classic mode the grade returns its input untouched — the guard
+// is exact, and the classic path's output does not move.
+// ---------------------------------------------------------------------
+
+fn bayer4(x: i32, y: i32) -> f32 {
+    let m = array<f32, 16>(
+        0.0, 8.0, 2.0, 10.0,
+        12.0, 4.0, 14.0, 6.0,
+        3.0, 11.0, 1.0, 9.0,
+        15.0, 7.0, 13.0, 5.0,
+    );
+    return m[(y & 3) * 4 + (x & 3)] / 16.0;
+}
+
+fn ps15_grade(col: vec3<f32>, px: vec2<f32>) -> vec3<f32> {
+    if (u.present.x < 0.5) {
+        return col;
+    }
+    let steps = u.present.z;
+    let dith = bayer4(i32(px.x), i32(px.y));
+    let g = sqrt(max(col, vec3<f32>(0.0)));
+    let q = clamp(floor(g * steps + dith) / steps, vec3<f32>(0.0), vec3<f32>(1.0));
+    return q * q;
 }
