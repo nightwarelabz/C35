@@ -362,7 +362,7 @@ pub enum Bone {
 }
 
 impl Bone {
-    fn idx(self) -> usize {
+    pub fn idx(self) -> usize {
         self as usize
     }
     fn parent(self) -> Option<Bone> {
@@ -388,7 +388,7 @@ impl Bone {
     /// which is long-legged: the hip sits at 0.88 of a ~1.87 frame,
     /// where the first build (from the bust portrait alone) had it
     /// at 0.80 of 1.79.
-    fn pivot(self) -> Vec3 {
+    pub fn pivot(self) -> Vec3 {
         use Bone::*;
         match self {
             Pelvis => Vec3::new(0.0, 1.00, 0.0),
@@ -410,7 +410,7 @@ impl Bone {
     }
 }
 
-const BONE_COUNT: usize = 15;
+pub const BONE_COUNT: usize = 15;
 
 /// One rigid part: a box (or the patch quad) in bind-pose local
 /// space, bound to one bone, surfaced from one atlas region.
@@ -727,6 +727,136 @@ fn extra_fold(pose: OperatorPose) -> Option<(Bone, Vec3)> {
 }
 
 // ---------------------------------------------------------------------
+// The pose interface (M7)
+// ---------------------------------------------------------------------
+
+/// A pose as pure skeleton data: per-bone Euler angles in degrees
+/// (YXZ order, the pose tables' convention) plus the root's vertical
+/// offset from the standing origin (negative = dropped: crouch, gait
+/// bob, slide). **This is the interface between posing and geometry.**
+/// Staged poses, the locomotion system ([`crate::locomotion`]), and
+/// any future mesh built on this skeleton all meet here: joint
+/// transforms in, posed geometry out. Nothing downstream of this
+/// type may know which mesh consumes it, and nothing upstream may
+/// know the mesh's vertices or parts.
+#[derive(Copy, Clone, Debug)]
+pub struct PoseFrame {
+    pub angles: [Vec3; BONE_COUNT],
+    pub root_y: f32,
+}
+
+impl PoseFrame {
+    /// The zero pose: bind angles, standing root.
+    pub fn bind() -> PoseFrame {
+        PoseFrame {
+            angles: [Vec3::ZERO; BONE_COUNT],
+            root_y: 0.0,
+        }
+    }
+
+    /// A staged pose ([`OperatorPose`]) expressed through the
+    /// interface — the same angle set and root drop the M6 build
+    /// applied, so geometry built from it is unchanged.
+    pub fn from_pose(pose: OperatorPose) -> PoseFrame {
+        let def = pose_def(pose);
+        let mut angles = [Vec3::ZERO; BONE_COUNT];
+        for (b, a) in def.angles {
+            angles[b.idx()] = a;
+        }
+        if let Some((b, a)) = extra_fold(pose) {
+            angles[b.idx()] += a;
+        }
+        PoseFrame {
+            angles,
+            root_y: -def.root_drop,
+        }
+    }
+
+    /// Angle-wise blend toward another frame (shortest-path is not
+    /// needed: every angle in play stays well inside ±180°).
+    pub fn lerp(&self, other: &PoseFrame, t: f32) -> PoseFrame {
+        let mut angles = [Vec3::ZERO; BONE_COUNT];
+        for i in 0..BONE_COUNT {
+            angles[i] = self.angles[i].lerp(other.angles[i], t);
+        }
+        PoseFrame {
+            angles,
+            root_y: self.root_y + (other.root_y - self.root_y) * t,
+        }
+    }
+
+    pub fn set(&mut self, bone: Bone, angles: Vec3) {
+        self.angles[bone.idx()] = angles;
+    }
+
+    pub fn add(&mut self, bone: Bone, delta: Vec3) {
+        self.angles[bone.idx()] += delta;
+    }
+
+    pub fn get(&self, bone: Bone) -> Vec3 {
+        self.angles[bone.idx()]
+    }
+}
+
+/// The root placement matrix shared by the geometry build and the
+/// kinematics helpers, so a measured foot and a drawn foot can never
+/// disagree about where the figure stands: origin at the spot, the
+/// terrain height plus the frame's root offset, yawed to facing.
+pub fn root_matrix(spot: Vec3, ground_y: f32, frame: &PoseFrame, yaw_deg: f32) -> Mat4 {
+    Mat4::from_translation(Vec3::new(spot.x, ground_y + frame.root_y, spot.z))
+        * Mat4::from_rotation_y(yaw_deg.to_radians())
+}
+
+/// Every bone's pivot in operator-local space for a frame — the
+/// forward kinematics of the skeleton itself, no mesh involved.
+/// Measurement (foot speed, joint ranges) reads this.
+pub fn joint_positions(frame: &PoseFrame) -> [Vec3; BONE_COUNT] {
+    let mats = bone_matrices(frame);
+    let mut out = [Vec3::ZERO; BONE_COUNT];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let bone = bone_from_idx(i);
+        *slot = mats[i].transform_point3(bone.pivot());
+    }
+    out
+}
+
+/// A point rigidly attached to a bone (given in bind-pose local
+/// coordinates), evaluated in operator-local space for a frame.
+pub fn bone_point(frame: &PoseFrame, bone: Bone, bind_point: Vec3) -> Vec3 {
+    bone_matrices(frame)[bone.idx()].transform_point3(bind_point)
+}
+
+/// The bind-pose centre of the boot sole, in skeleton coordinates:
+/// directly under the ankle pivot (which stands 0.15 above the sole
+/// plane) and a touch forward — where the boot meets the ground.
+/// Skeleton data: any mesh skinned to this skeleton plants here.
+pub fn sole_bind_point(left: bool) -> Vec3 {
+    let x = if left { 0.11 } else { -0.11 };
+    Vec3::new(x, 0.0, 0.03)
+}
+
+/// One foot's kinematics in operator-local space: the ankle pivot
+/// and the sole centre, both from the skeleton alone.
+#[derive(Copy, Clone, Debug)]
+pub struct FootKinematics {
+    pub ankle: Vec3,
+    pub sole: Vec3,
+}
+
+pub fn foot_kinematics(frame: &PoseFrame, left: bool) -> FootKinematics {
+    let mats = bone_matrices(frame);
+    let (foot, ankle_pivot) = if left {
+        (Bone::FootL, Bone::FootL.pivot())
+    } else {
+        (Bone::FootR, Bone::FootR.pivot())
+    };
+    FootKinematics {
+        ankle: mats[foot.idx()].transform_point3(ankle_pivot),
+        sole: mats[foot.idx()].transform_point3(sole_bind_point(left)),
+    }
+}
+
+// ---------------------------------------------------------------------
 // Geometry build
 // ---------------------------------------------------------------------
 
@@ -815,16 +945,13 @@ impl OperatorMesh {
     }
 }
 
-/// Evaluate the skeleton for a pose: each bone's world matrix (in
-/// operator-local space) from the chain of pivot rotations.
-fn bone_matrices(def: &PoseDef, pose: OperatorPose) -> [Mat4; BONE_COUNT] {
-    let mut angles = [Vec3::ZERO; BONE_COUNT];
-    for (b, a) in def.angles {
-        angles[b.idx()] = a;
-    }
-    if let Some((b, a)) = extra_fold(pose) {
-        angles[b.idx()] += a;
-    }
+/// Evaluate the skeleton for a frame: each bone's world matrix (in
+/// operator-local space) from the chain of pivot rotations. Public
+/// because solvers above the skeleton (the locomotion IK) work in
+/// parent-bone space and need the chain's own transforms — the
+/// same matrices the measurement helpers read.
+pub fn bone_matrices(frame: &PoseFrame) -> [Mat4; BONE_COUNT] {
+    let angles = frame.angles;
     let mut mats = [Mat4::IDENTITY; BONE_COUNT];
     // Bones are declared parents-first; a single pass in declaration
     // order evaluates the whole chain.
@@ -868,19 +995,31 @@ fn bone_from_idx(i: usize) -> Bone {
     }
 }
 
-/// Build the posed, placed operator mesh: skinning (rigid, per bone)
-/// then placement (position + yaw + the pose's root drop). The feet
-/// plant at `ground_y` — the caller reads the terrain height.
+/// Build the posed, placed operator mesh from a staged pose: the
+/// pose is expressed through the [`PoseFrame`] interface and built
+/// by [`build_operator_frame`] — one path for staged and animated
+/// geometry alike.
 pub fn build_operator(
     pose: OperatorPose,
     spot: Vec3,
     ground_y: f32,
     yaw_deg: f32,
 ) -> OperatorMesh {
-    let def = pose_def(pose);
-    let mats = bone_matrices(&def, pose);
-    let root = Mat4::from_translation(Vec3::new(spot.x, ground_y - def.root_drop, spot.z))
-        * Mat4::from_rotation_y(yaw_deg.to_radians());
+    build_operator_frame(&PoseFrame::from_pose(pose), spot, ground_y, yaw_deg)
+}
+
+/// Build the posed, placed operator mesh from a raw pose frame:
+/// skinning (rigid, per bone) then placement (position + yaw + the
+/// frame's root offset). The feet plant at `ground_y` — the caller
+/// reads the terrain height.
+pub fn build_operator_frame(
+    frame: &PoseFrame,
+    spot: Vec3,
+    ground_y: f32,
+    yaw_deg: f32,
+) -> OperatorMesh {
+    let mats = bone_matrices(frame);
+    let root = root_matrix(spot, ground_y, frame, yaw_deg);
 
     let mut vertices: Vec<OperatorVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();

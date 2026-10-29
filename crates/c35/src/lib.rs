@@ -47,6 +47,7 @@
 
 pub mod ecs;
 pub mod governor;
+pub mod locomotion;
 pub mod noise;
 pub mod operator;
 pub mod scene;
@@ -56,6 +57,7 @@ pub mod world;
 /// Re-exported so hosts build against exactly the engine's wgpu.
 pub use wgpu;
 pub use pollster;
+pub use glam;
 pub use operator::OperatorPose;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -118,6 +120,11 @@ struct ResolveUniforms {
     inv_view_proj: [[f32; 4]; 4],
     prev_view_proj: [[f32; 4]; 4],
     params: [f32; 4],
+    /// M7 velocity-aware history rejection: (gain per pixel past
+    /// the threshold, threshold in resolve pixels, resolve width,
+    /// resolve height). Gain 0 = the term contributes exactly 0.0
+    /// and the resolve is bit-identical to M1–M6.
+    vel: [f32; 4],
 }
 
 /// Which anti-aliasing the renderer runs — decided from the adapter's
@@ -451,6 +458,9 @@ pub struct Renderer {
     /// M6 presentation mode + its fog look multiplier.
     present_mode: PresentMode,
     ps15_fog_mul: f32,
+    /// M7 velocity-aware history rejection (gain, threshold px).
+    /// Ships inert (gain 0.0) until the motion A/B rules on it.
+    vel_reject: (f32, f32),
     /// M6 operator apparatus: pipelines + the atlas bind group are
     /// built once; the posed geometry is uploaded per `set_operator`.
     operator_pipeline: wgpu::RenderPipeline,
@@ -1540,6 +1550,7 @@ impl Renderer {
             shadow_bytes,
             present_mode: PresentMode::Classic,
             ps15_fog_mul: 2.0,
+            vel_reject: (0.0, 2.0),
             operator_pipeline,
             operator_depth_pipeline,
             operator_bind_group,
@@ -1876,6 +1887,21 @@ impl Renderer {
         self.present_mode
     }
 
+    /// M7: velocity-aware history rejection for the TAA resolve —
+    /// the blend alpha rises with the pixel's reprojection
+    /// displacement past `threshold_px`, at `gain` per pixel, so
+    /// fast-disoccluding pixels (a running man's limbs, silhouette
+    /// edges under a moving camera) trust history less. The M7
+    /// motion A/B is the evidence this ships on; a gain of 0.0 is
+    /// arithmetically identical to the M1–M6 resolve.
+    pub fn set_velocity_rejection(&mut self, gain: f32, threshold_px: f32) {
+        self.vel_reject = (gain.max(0.0), threshold_px.max(0.0));
+    }
+
+    pub fn velocity_rejection(&self) -> (f32, f32) {
+        self.vel_reject
+    }
+
     /// The internal frame's size — the number the PS1.5 payoff is
     /// measured in (and, in classic mode, exactly the governor-scaled
     /// size it has always been).
@@ -1923,23 +1949,60 @@ impl Renderer {
                     ground,
                     operator::OPERATOR_YAW_DEG,
                 );
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("operator vertices"),
-                    contents: bytemuck::cast_slice(&mesh.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("operator indices"),
-                    contents: bytemuck::cast_slice(&mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                self.operator_tris = mesh.triangle_count();
-                self.operator_bytes = (mesh.vertices.len()
-                    * std::mem::size_of::<operator::OperatorVertex>()
-                    + mesh.indices.len() * 4) as u64;
-                self.operator_bufs = Some((vb, ib, mesh.indices.len() as u32));
+                self.upload_operator(&mesh);
             }
         }
+    }
+
+    /// M7: place (or re-place) the operator from an evaluated mesh —
+    /// the per-frame seam the locomotion drive uses. The pose
+    /// interface ([`operator::PoseFrame`]) is evaluated and skinned
+    /// by the caller; this only moves geometry. Buffers are created
+    /// once and rewritten in place while the mesh's shape (vertex /
+    /// index counts) is stable, which a skinned skeleton's is.
+    pub fn update_operator(&mut self, mesh: &operator::OperatorMesh) {
+        self.upload_operator(mesh);
+    }
+
+    /// Remove the operator (the movement drive's ghost/plate runs).
+    pub fn clear_operator(&mut self) {
+        self.operator_bufs = None;
+        self.operator_tris = 0;
+        self.operator_bytes = 0;
+    }
+
+    fn upload_operator(&mut self, mesh: &operator::OperatorMesh) {
+        let vbytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
+        let ibytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
+        let fits = match &self.operator_bufs {
+            Some((vb, ib, count)) => {
+                *count as usize == mesh.indices.len()
+                    && vb.size() == vbytes.len() as u64
+                    && ib.size() == ibytes.len() as u64
+            }
+            None => false,
+        };
+        if fits {
+            let (vb, ib, _) = self.operator_bufs.as_ref().unwrap();
+            self.queue.write_buffer(vb, 0, vbytes);
+            self.queue.write_buffer(ib, 0, ibytes);
+        } else {
+            let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("operator vertices"),
+                contents: vbytes,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+            let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("operator indices"),
+                contents: ibytes,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            });
+            self.operator_bufs = Some((vb, ib, mesh.indices.len() as u32));
+        }
+        self.operator_tris = mesh.triangle_count();
+        self.operator_bytes = (mesh.vertices.len()
+            * std::mem::size_of::<operator::OperatorVertex>()
+            + mesh.indices.len() * 4) as u64;
     }
 
     /// Triangles the operator contributes when placed (0 when absent).
@@ -2274,6 +2337,12 @@ impl Renderer {
                     jitter_uv.y,
                     if self.history_valid { 1.0 } else { 0.0 },
                     0.1,
+                ],
+                vel: [
+                    self.vel_reject.0,
+                    self.vel_reject.1,
+                    targets.res_w as f32,
+                    targets.res_h as f32,
                 ],
             };
             self.queue

@@ -32,6 +32,16 @@
 //! in the vista in a staged pose; `--pose op-a|op-b` are his proof
 //! cameras (they hold still; drift does not apply).
 //!
+//! M7 rig seams — the movement drive: `--move <script>` runs a
+//! scripted controller + procedural locomotion at a fixed 1/60 s
+//! step under a third-person camera (`--move-cam follow|track`),
+//! writing `{out-stem}-movelog.csv` beside the PNG. `--move-ghost`
+//! runs the same drive with the operator never placed (the motion
+//! A/B's plate). Without `--frames`, a drive runs until the script
+//! completes and settles. `--vel-reject gain,threshold_px` arms the
+//! renderer's velocity-aware history rejection for the A/B; the
+//! shipped default is off (gain 0).
+//!
 //! M3 rig notes: the quality governor is **pinned at level 0 by
 //! default** in this host, so a proof run's output is a deterministic
 //! function of its pin (the ladder cannot wander mid-measurement).
@@ -174,6 +184,50 @@ fn print_reality(r: &Reality) {
     );
 }
 
+/// The follow rig — DeBrief DESIGN §8's open-ground law: low,
+/// over the right shoulder, the man framed left-of-centre with the
+/// ground he is crossing readable ahead of him. The anchor it reads
+/// is smoothed by the caller (tau ~0.14 s); the offsets are the
+/// rig's contract: 3.4 m back, 1.52 m up, 0.62 m to his right,
+/// looking at a point 4.0 m ahead at chest height, fov 50.
+fn follow_pose(anchor: c35::glam::Vec3, yaw: f32) -> c35::scene::CameraPose {
+    use c35::glam::Vec3;
+    let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+    c35::scene::CameraPose {
+        eye: anchor + Vec3::new(0.0, 1.52, 0.0) - fwd * 3.4 + right * 0.62,
+        target: anchor + Vec3::new(0.0, 1.48, 0.0) + fwd * 4.0,
+        fov_y_deg: 50.0,
+    }
+}
+
+/// The track rig: a dolly off his left side at a fixed offset —
+/// the cycle-evidence camera (phase points read cleanest in
+/// profile). Reads the unsmoothed position by design.
+fn track_pose(now: c35::glam::Vec3, yaw: f32) -> c35::scene::CameraPose {
+    use c35::glam::Vec3;
+    let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+    c35::scene::CameraPose {
+        eye: now - right * 4.4 + Vec3::new(0.0, 1.15, 0.0),
+        target: now + Vec3::new(0.0, 0.95, 0.0),
+        fov_y_deg: 50.0,
+    }
+}
+
+fn drive_cam_pose(
+    cam: &str,
+    anchor: c35::glam::Vec3,
+    now: c35::glam::Vec3,
+    yaw: f32,
+) -> c35::scene::CameraPose {
+    if cam == "track" {
+        track_pose(now, yaw)
+    } else {
+        follow_pose(anchor, yaw)
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let width: u32 = arg_value(&args, "--width")
@@ -216,6 +270,15 @@ fn main() {
                 .collect()
         })
         .unwrap_or_default();
+    // M7 seams: the movement drive and the velocity-rejection A/B.
+    let move_arg = arg_value(&args, "--move");
+    let move_cam = arg_value(&args, "--move-cam").unwrap_or_else(|| "follow".to_string());
+    let move_ghost = args.iter().any(|a| a == "--move-ghost");
+    let frames_given = args.iter().any(|a| a == "--frames");
+    let vel_reject: Option<(f32, f32)> = arg_value(&args, "--vel-reject").and_then(|v| {
+        let mut p = v.split(',');
+        Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?))
+    });
 
     let reality = resolve_reality();
     let world = reality.world;
@@ -236,6 +299,9 @@ fn main() {
         Some("cpu") => renderer.set_cull_mode(c35::CullMode::Cpu),
         Some("gpu") => renderer.set_cull_mode(c35::CullMode::Gpu),
         _ => {}
+    }
+    if let Some((gain, thresh)) = vel_reject {
+        renderer.set_velocity_rejection(gain, thresh);
     }
 
     // Presentation + operator (also before any frame, governor
@@ -300,20 +366,122 @@ fn main() {
     });
     let out_view = out_tex.create_view(&Default::default());
 
+    // ---- M7 movement drive state ----
+    // A scripted controller + the procedural animator, stepped at a
+    // fixed 1/60 s. The camera anchor is smoothed (tau ~0.14 s) for
+    // the follow rig; the track rig reads the raw position.
+    struct Drive {
+        ctrl: c35::locomotion::Controller,
+        anim: c35::locomotion::Animator,
+        anchor: c35::glam::Vec3,
+        log: String,
+        top_speed: f32,
+        ran: usize,
+        settle: usize,
+    }
+    let mut drive = move_arg.as_ref().map(|name| {
+        let (start, legs) = c35::locomotion::proof_script(name)
+            .unwrap_or_else(|| panic!("unknown --move script '{name}'"));
+        let ctrl = c35::locomotion::Controller::new(start, legs);
+        let a = *ctrl.agent();
+        Drive {
+            ctrl,
+            anim: c35::locomotion::Animator::new(),
+            anchor: c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
+            log: "frame,t,x,z,yaw_deg,speed,gait,phase_deg,aim,crouch,slide,leg\n".to_string(),
+            top_speed: 0.0,
+            ran: 0,
+            settle: 0,
+        }
+    });
+    if let Some(d) = drive.as_mut() {
+        // Warm the animator at the start point (standing) and place
+        // the operator before the warmup renders, so the drive's
+        // first measured frame is already the moving scene.
+        let a = *d.ctrl.agent();
+        let input = c35::locomotion::AnimInput {
+            pos: c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
+            yaw: a.yaw,
+            speed: 0.0,
+            crouch: 0.0,
+            aim: 0.0,
+            slide: 0.0,
+            carry: true,
+        };
+        let frame0 = d.anim.update(0.0, &input);
+        if !move_ghost {
+            let mesh = c35::operator::build_operator_frame(
+                &frame0,
+                c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
+                d.anim.ground_y(),
+                a.yaw.to_degrees(),
+            );
+            renderer.update_operator(&mesh);
+        }
+        d.anchor = c35::glam::Vec3::new(a.pos.x, d.anim.ground_y(), a.pos.y);
+    }
+
     // Warmup: shader compilation and pipeline setup land here, not in the
     // measured run.
     for _ in 0..10 {
-        renderer.render(&out_view, &pose_at(0.0), &world, 0.0);
+        let wp = if let Some(d) = drive.as_ref() {
+            drive_cam_pose(&move_cam, d.anchor, d.anchor, d.ctrl.agent().yaw)
+        } else {
+            pose_at(0.0)
+        };
+        renderer.render(&out_view, &wp, &world, 0.0);
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
     }
     let _ = renderer.drain_gpu_samples();
 
+    let frames = if drive.is_some() && !frames_given { 20000 } else { frames };
     let mut frame_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut update_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut printed_adj = 0usize;
     for i in 0..frames {
-        let t = if drift { i as f32 / 60.0 * drift_rate } else { 0.0 };
-        let pose = pose_at(t);
+        let (t, pose) = if let Some(d) = drive.as_mut() {
+            let dt = 1.0f32 / 60.0;
+            let input = d.ctrl.update(dt);
+            let pframe = d.anim.update(dt, &input);
+            let a = *d.ctrl.agent();
+            d.top_speed = d.top_speed.max(a.speed);
+            if !move_ghost {
+                let mesh = c35::operator::build_operator_frame(
+                    &pframe,
+                    c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
+                    d.anim.ground_y(),
+                    a.yaw.to_degrees(),
+                );
+                renderer.update_operator(&mesh);
+            }
+            let target_anchor = c35::glam::Vec3::new(a.pos.x, d.anim.ground_y(), a.pos.y);
+            let k = 1.0 - (-dt / 0.14f32).exp();
+            d.anchor = d.anchor + (target_anchor - d.anchor) * k;
+            let pose = drive_cam_pose(&move_cam, d.anchor, target_anchor, a.yaw);
+            d.log.push_str(&format!(
+                "{},{:.4},{:.3},{:.3},{:.2},{:.3},{},{:.1},{:.2},{:.2},{:.2},{}\n",
+                i,
+                i as f32 / 60.0,
+                a.pos.x,
+                a.pos.y,
+                a.yaw.to_degrees(),
+                a.speed,
+                a.gait.name(),
+                d.anim.phase().to_degrees(),
+                input.aim,
+                input.crouch,
+                input.slide,
+                a.leg
+            ));
+            d.ran = i + 1;
+            if a.done && a.speed < 0.05 {
+                d.settle += 1;
+            }
+            (i as f32 / 60.0, pose)
+        } else {
+            let t = if drift { i as f32 / 60.0 * drift_rate } else { 0.0 };
+            (t, pose_at(t))
+        };
         let start = Instant::now();
         renderer.render(&out_view, &pose, &world, t);
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
@@ -339,6 +507,13 @@ fn main() {
             );
             printed_adj += 1;
         }
+        if drive.as_ref().map(|d| d.settle >= 45).unwrap_or(false) {
+            break;
+        }
+    }
+    if let Some(d) = drive.as_ref() {
+        let stem = out.strip_suffix(".png").unwrap_or(&out);
+        std::fs::write(format!("{stem}-movelog.csv"), &d.log).expect("write movelog");
     }
     let (shadow_ms, gpu_ms) = renderer.drain_gpu_samples();
     let cull_ms = renderer.drain_cull_samples();
@@ -407,6 +582,16 @@ fn main() {
         "tracked vram     : {:.2} MiB (engine-tracked allocations, estimate)",
         renderer.tracked_vram_bytes() as f64 / (1024.0 * 1024.0)
     );
+    if let Some(d) = drive.as_ref() {
+        println!(
+            "move drive       : script {} ({} frames, {:.1} m travelled, top speed {:.2} m/s, cam {})",
+            move_arg.as_deref().unwrap_or(""),
+            d.ran,
+            d.ctrl.agent().distance,
+            d.top_speed,
+            move_cam
+        );
+    }
     println!("hero pose png    : {out}");
 
     // ---- the M3 core: ECS + visibility accounting ----
