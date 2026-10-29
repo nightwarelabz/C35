@@ -17,6 +17,7 @@ struct ResolveUniforms {
     inv_view_proj: mat4x4<f32>,  // current frame, unjittered
     prev_view_proj: mat4x4<f32>, // previous frame, unjittered
     params: vec4<f32>,           // xy: jitter in UV · z: history valid · w: blend alpha
+    vel: vec4<f32>,              // M7 velocity-aware rejection: x gain/px · y threshold px · zw resolve dims
 }
 
 @group(0) @binding(0) var<uniform> ru: ResolveUniforms;
@@ -91,8 +92,21 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
         return vec4<f32>(cur, 1.0);
     }
 
+    // M7 velocity-aware history rejection: the displacement this
+    // pixel's surface travelled since last frame, in resolve pixels.
+    // Sub-threshold motion (camera stillness, TAA jitter, slow drift)
+    // changes the blend not at all — the term is exactly zero there,
+    // so every static frame is bit-identical to the M1–M6 resolve.
+    // Past the threshold the blend alpha rises at the gain per pixel:
+    // fast-disoccluding surfaces (a running man's limbs, silhouette
+    // edges under a tracking camera) stop inheriting stale history
+    // the neighbourhood clamp alone would let through.
+    let disp_px = length((prev_uv - in.uv) * ru.vel.zw);
+    let excess = max(disp_px - ru.vel.y, 0.0);
+    let alpha = clamp(ru.params.w + ru.vel.x * excess, 0.0, 1.0);
+
     var hist = textureSampleLevel(hist_tex, lin_samp, prev_uv, 0.0).rgb;
     hist = clamp(hist, cmin, cmax); // neighbourhood clamp: history may not invent colours
-    let resolved = mix(hist, cur, ru.params.w);
+    let resolved = mix(hist, cur, alpha);
     return vec4<f32>(resolved, 1.0);
 }
