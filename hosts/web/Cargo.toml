@@ -1,0 +1,27 @@
+[package]
+name = "comigen-web"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Comigen web host — the same engine in the browser (WebGPU, WebGL2 fallback)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+c35 = { path = "../../crates/c35" }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "Performance",
+]
