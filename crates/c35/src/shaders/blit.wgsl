@@ -1,8 +1,7 @@
-// Blit: the resolution-scale step. Samples the offscreen scene target
-// (post-TAA-resolve where TAA runs) and writes it to the output. At scale
-// 1.0 this is effectively a copy; below 1.0 it is a plain bilinear
-// upscale. On the WebGL2 fallback path the FXAA variant of this pass
-// (fxaa.wgsl, same bindings) runs instead.
+// Blit: the final step to the output. On the temporal-reconstruction
+// path the resolve already wrote at output resolution, so this is a
+// straight copy; on the WebGL2 fallback path the FXAA variant of this
+// pass (fxaa.wgsl, same bindings) runs over the internal target instead.
 
 @group(0) @binding(0) var scene_tex: texture_2d<f32>;
 @group(0) @binding(1) var scene_sampler: sampler;

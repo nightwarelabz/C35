@@ -8,12 +8,27 @@
 //! temporal AA where the backend can carry it (FXAA on the WebGL2
 //! fallback path; the ledger names which ran).
 //!
+//! M3: the renderer becomes an engine core. The scene lives in a
+//! data-oriented ECS ([`ecs`], [`vista`]) — camera, world state, terrain
+//! tiles, water and sky are components; a visibility system frustum-culls
+//! the 4×4 tile grid and picks a density LOD per tile. The TAA resolve
+//! becomes **temporal reconstruction**: the scene renders at the
+//! governor's internal scale and the history resolve writes at output
+//! resolution. And the frame governs itself ([`governor`]): an EMA of
+//! frame time is held against a target and the engine sheds its own
+//! ranked costs — render scale, shadow resolution, detail reach, water
+//! octaves — before it ever drops a frame it could have afforded. A pin
+//! is a pin: pinned, the governor only watches and reports.
+//!
 //! The house law: **if it costs, it shows.** Every frame is counted —
 //! draw calls per pass, triangles, render scale, tracked memory, frame
 //! time, and GPU pass times where the backend exposes timestamp queries.
 
+pub mod ecs;
+pub mod governor;
 pub mod noise;
 pub mod scene;
+pub mod vista;
 pub mod world;
 
 /// Re-exported so hosts build against exactly the engine's wgpu.
@@ -27,16 +42,23 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use scene::{CameraPose, TerrainMesh};
+use scene::CameraPose;
 use world::WorldState;
+
+use ecs::{CoreStats, JobPool};
+use governor::{Governor, QualityState};
+use scene::TerrainTile;
+use vista::Vista;
 
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Single-cascade sun shadow map edge (kept in sync with SHADOW_TEXEL in
-/// shaders/common.wgsl). 2048 over a ±380-unit ortho box ≈ 0.37
-/// units/texel — fine enough to carve the headwall's shadow, cheap enough
-/// to stay one draw call. The ledger prints its cost like everything else.
+/// Single-cascade sun shadow map edge at governor level 0 (the PCF texel
+/// size itself travels in the `quality` uniform — see shaders/common.wgsl).
+/// 2048 over a ±380-unit ortho box ≈ 0.37 units/texel — fine enough to
+/// carve the headwall's shadow, cheap enough to stay one cascade. The
+/// governor's ladder resizes it (2048 → 1024 → off); the ledger prints
+/// its cost like everything else.
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 /// Half-extent of the shadow ortho box (bounding-sphere fit of the vista).
 const SHADOW_RADIUS: f32 = 380.0;
@@ -62,6 +84,7 @@ struct Uniforms {
     season: [f32; 4],
     water_p: [f32; 4],
     misc: [f32; 4],
+    quality: [f32; 4],
 }
 
 #[repr(C)]
@@ -219,6 +242,15 @@ struct Targets {
     bytes: u64,
 }
 
+/// One terrain tile's GPU side: a single vertex buffer (the tile's
+/// full-res vertices plus the reduced LODs' skirt vertices) and one
+/// index buffer per LOD slot.
+struct TileBuffers {
+    vb: wgpu::Buffer,
+    ibs: [wgpu::Buffer; 3],
+    counts: [u32; 3],
+}
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -244,11 +276,25 @@ pub struct Renderer {
     blit_sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
     shadow_bytes: u64,
-    terrain_vb: wgpu::Buffer,
-    terrain_ib: wgpu::Buffer,
-    terrain_indices: u32,
-    terrain_tris: u64,
+    tile_buffers: Vec<TileBuffers>,
     geometry_bytes: u64,
+    // The M3 core: job pool, the ECS vista, the quality governor.
+    pool: JobPool,
+    vista: Vista,
+    governor: Governor,
+    /// The quality state currently applied to the GPU.
+    quality: QualityState,
+    /// The host's own render-scale request; the governor's ladder scale
+    /// multiplies it (hosts normally pass 1.0).
+    base_scale: f32,
+    /// Current shadow map edge (governor-driven; 0 = pass off).
+    shadow_size: u32,
+    scene_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
+    core_stats: CoreStats,
+    out_size: (u32, u32),
+    last_tris: u64,
+    last_shadow_tris: u64,
     targets: Option<Targets>,
     shadow_timer: Option<PassTimer>,
     scene_timer: Option<PassTimer>,
@@ -364,6 +410,9 @@ impl Renderer {
             .await
             .expect("failed to create device");
         let period_ns = queue.get_timestamp_period();
+
+        // The job pool comes up first: tile generation runs through it.
+        let pool = JobPool::new();
 
         // ---- shadow map (fixed size; allocated once) ----
         let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -846,22 +895,58 @@ impl Renderer {
             cache: None,
         });
 
-        // ---- terrain geometry (generated, seeded — the same on every host) ----
-        let mesh: TerrainMesh = scene::generate_terrain();
-        let terrain_tris = mesh.triangle_count();
-        let terrain_indices = mesh.indices.len() as u32;
-        let vb_bytes = (mesh.vertices.len() * std::mem::size_of::<scene::TerrainVertex>()) as u64;
-        let ib_bytes = (mesh.indices.len() * 4) as u64;
-        let terrain_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain vertices"),
-            contents: bytemuck::cast_slice(&mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+        // ---- terrain geometry: the island as 16 tiles, generated in
+        // parallel through the job pool (seeded — the same island on
+        // every host, vertex-for-vertex the M1/M2 island at the seams) ----
+        let mut tile_slots: Vec<Option<TerrainTile>> =
+            (0..scene::TILE_COUNT).map(|_| None).collect();
+        pool.for_each_chunk_mut(&mut tile_slots, pool.size(), &|start, chunk| {
+            for (i, slot) in chunk.iter_mut().enumerate() {
+                *slot = Some(scene::generate_tile(start + i));
+            }
         });
-        let terrain_ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain indices"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let tiles: Vec<TerrainTile> = tile_slots
+            .into_iter()
+            .map(|t| t.expect("every tile generated"))
+            .collect();
+        let mut tile_buffers: Vec<TileBuffers> = Vec::with_capacity(tiles.len());
+        let mut tile_meta: Vec<(Vec3, f32, [u64; 3])> = Vec::with_capacity(tiles.len());
+        let mut geometry_bytes: u64 = 0;
+        for tile in &tiles {
+            geometry_bytes +=
+                (tile.vertices.len() * std::mem::size_of::<scene::TerrainVertex>()) as u64;
+            let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain tile vertices"),
+                contents: bytemuck::cast_slice(&tile.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let mut ibs: Vec<wgpu::Buffer> = Vec::with_capacity(3);
+            let mut counts = [0u32; 3];
+            for (slot, idx) in tile.lod_indices.iter().enumerate() {
+                counts[slot] = idx.len() as u32;
+                geometry_bytes += (idx.len() * 4) as u64;
+                ibs.push(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("terrain tile indices"),
+                    contents: bytemuck::cast_slice(idx),
+                    usage: wgpu::BufferUsages::INDEX,
+                }));
+            }
+            let ibs: [wgpu::Buffer; 3] = ibs.try_into().ok().expect("three LOD index buffers");
+            tile_buffers.push(TileBuffers { vb, ibs, counts });
+            tile_meta.push((
+                tile.center,
+                tile.radius,
+                [
+                    tile.lod_triangles(scene::Lod::Full),
+                    tile.lod_triangles(scene::Lod::Half),
+                    tile.lod_triangles(scene::Lod::Quarter),
+                ],
+            ));
+        }
+        let full_tris: u64 = tile_meta.iter().map(|m| m.2[0]).sum();
+        let vista = Vista::new(&tile_meta);
+        let governor = Governor::new(16.7);
+        let quality = governor.state();
 
         // ---- GPU timers (optional; only where the adapter offered them) ----
         let (shadow_timer, scene_timer) = if features.contains(wgpu::Features::TIMESTAMP_QUERY) {
@@ -902,11 +987,20 @@ impl Renderer {
             blit_sampler,
             linear_sampler,
             shadow_bytes,
-            terrain_vb,
-            terrain_ib,
-            terrain_indices,
-            terrain_tris,
-            geometry_bytes: vb_bytes + ib_bytes,
+            tile_buffers,
+            geometry_bytes,
+            pool,
+            vista,
+            governor,
+            quality,
+            base_scale: render_scale,
+            shadow_size: SHADOW_MAP_SIZE,
+            scene_layout,
+            shadow_sampler,
+            core_stats: CoreStats::default(),
+            out_size: (width, height),
+            last_tris: full_tris + 4,
+            last_shadow_tris: full_tris,
             targets: None,
             shadow_timer,
             scene_timer,
@@ -918,14 +1012,17 @@ impl Renderer {
             last_shadow_active: false,
         };
         renderer.shadow_attach = Some((shadow_tex, shadow_attach_view));
-        renderer.resize(width, height, render_scale);
+        renderer.resize(width, height);
         renderer
     }
 
-    /// (Re)create the offscreen scene targets for an output of `width`×`height`
-    /// rendered internally at `scale`.
-    pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
-        let scale = scale.clamp(0.25, 1.0);
+    /// (Re)create the offscreen scene targets for an output of
+    /// `width`×`height`. The effective render scale is the host's base
+    /// scale times the governor's current ladder scale — `resize` never
+    /// second-guesses the governor.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.out_size = (width, height);
+        let scale = (self.base_scale * self.quality.render_scale).clamp(0.25, 1.0);
         let sw = ((width as f32 * scale) as u32).max(1);
         let sh = ((height as f32 * scale) as u32).max(1);
         let size = wgpu::Extent3d {
@@ -958,12 +1055,20 @@ impl Renderer {
         let color_view = color.create_view(&Default::default());
         let depth_view = depth.create_view(&Default::default());
 
-        // TAA chain: a resolved target (resolve output + blit source) and
-        // a history texture (last frame's resolved image).
-        let (blit_source_view, history_tex, tex_count) = if self.aa_mode == AaMode::Taa {
+        // Temporal reconstruction chain: the resolve writes at OUTPUT
+        // resolution — the resolved texture and the history are output-
+        // sized, so the resolve's per-output-pixel history blend is the
+        // upsampler, and the blit after it is a straight copy (FXAA path
+        // excepted: it blits the internal target directly, as before).
+        let (blit_source_view, history_tex, extra_bytes) = if self.aa_mode == AaMode::Taa {
+            let out_extent = wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            };
             let resolved = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("taa resolved"),
-                size,
+                label: Some("reconstruction resolved"),
+                size: out_extent,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -974,8 +1079,8 @@ impl Renderer {
                 view_formats: &[],
             });
             let history = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("taa history"),
-                size,
+                label: Some("reconstruction history"),
+                size: out_extent,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -983,12 +1088,13 @@ impl Renderer {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            // Keep the resolved texture alive by leaking its handle into
-            // the history slot's companion — the Targets struct keeps the
-            // textures it needs below.
-            (resolved.create_view(&Default::default()), Some((history, resolved)), 4u64)
+            (
+                resolved.create_view(&Default::default()),
+                Some((history, resolved)),
+                (width * height) as u64 * 8, // resolved + history, 4 B/px each
+            )
         } else {
-            (color_view.clone(), None, 2u64)
+            (color_view.clone(), None, 0u64)
         };
         let blit_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit bind group"),
@@ -1004,8 +1110,9 @@ impl Renderer {
                 },
             ],
         });
-        // color(4) + depth(4) [+ resolved(4) + history(4)] bytes per pixel.
-        let bytes = (sw * sh) as u64 * 4 * tex_count;
+        // Internal colour+depth at 4 B/px each, plus the output-sized
+        // reconstruction pair where TAA runs.
+        let bytes = (sw * sh) as u64 * 8 + extra_bytes;
         // Rebuild the resolve bind group against the fresh textures.
         if self.aa_mode == AaMode::Taa {
             let (hist, resolved) = history_tex.as_ref().unwrap();
@@ -1086,16 +1193,147 @@ impl Renderer {
         self.last_shadow_active
     }
 
+    /// Scene-pass triangles submitted by the most recent frame (terrain
+    /// after culling + LOD, plus water, sky and the blit triangle).
     pub fn triangles_per_frame(&self) -> u64 {
-        self.terrain_tris + 2 /* water */ + 1 /* sky */ + 1 /* blit */
+        self.last_tris
     }
 
-    /// Triangles the shadow pass re-renders (the terrain, from the sun).
+    /// Triangles the shadow pass re-rendered in the most recent frame
+    /// (the tiles the light frustum kept — casters always draw at full
+    /// density; see the vista module docs).
     pub fn shadow_triangles_per_frame(&self) -> u64 {
         if self.last_shadow_active {
-            self.terrain_tris
+            self.last_shadow_tris
         } else {
             0
+        }
+    }
+
+    /// The ECS core stats from the most recent frame's scene update.
+    pub fn core_stats(&self) -> CoreStats {
+        self.core_stats
+    }
+
+    /// Names of the scene systems that run per frame, in order.
+    pub fn system_names(&self) -> Vec<&'static str> {
+        self.vista.system_names()
+    }
+
+    /// The visibility system's accounting from the most recent frame.
+    pub fn cull_stats(&self) -> vista::CullStats {
+        self.vista.cull
+    }
+
+    pub fn governor(&self) -> &Governor {
+        &self.governor
+    }
+
+    /// Set the governor's frame-time target (proof rigs use this to make
+    /// shed behaviour observable; the shipped default is 16.7 ms).
+    pub fn set_governor_target(&mut self, target_ms: f64) {
+        self.governor.set_target(target_ms);
+    }
+
+    /// Pin (or release) the governor. A pin applies immediately — the
+    /// pinned level's quality state goes to the GPU at once — and from
+    /// there the governor only observes and reports (its law).
+    pub fn pin_governor(&mut self, level: Option<usize>) {
+        match level {
+            Some(l) => self.governor.pin_to(l),
+            None => self.governor.unpin(),
+        }
+        let s = self.governor.state();
+        self.apply_quality(s);
+    }
+
+    /// Feed one frame's measured cost (the host's frame-loop wall time)
+    /// to the governor; if it stepped the ladder, apply the new state.
+    pub fn observe_frame_ms(&mut self, ms: f64) {
+        if self.governor.observe(ms) {
+            let s = self.governor.state();
+            self.apply_quality(s);
+        }
+    }
+
+    fn apply_quality(&mut self, state: QualityState) {
+        let prev = self.quality;
+        self.quality = state;
+        if state.shadow_size != prev.shadow_size {
+            self.rebuild_shadow(state.shadow_size);
+        }
+        let eff = (self.base_scale * state.render_scale).clamp(0.25, 1.0);
+        let cur = self.targets.as_ref().map(|t| t.scale).unwrap_or(0.0);
+        if (eff - cur).abs() > 0.001 {
+            let (w, h) = self.out_size;
+            self.resize(w, h);
+        }
+    }
+
+    /// Rebuild the shadow map at a new edge (0 = governor shed shadows
+    /// entirely: a 1×1 stand-in keeps the scene bind group valid and the
+    /// pass is skipped, with shadow strength zeroed in the uniforms).
+    fn rebuild_shadow(&mut self, size: u32) {
+        let dim = size.max(1);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sun shadow map"),
+            size: wgpu::Extent3d {
+                width: dim,
+                height: dim,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        let view = Arc::new(view);
+        self.scene_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene bind group"),
+            layout: &self.scene_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view.as_ref()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                },
+            ],
+        });
+        self.shadow_bytes = (dim as u64) * (dim as u64) * 4;
+        self.shadow_size = size;
+        self.shadow_attach = Some((tex, view));
+    }
+
+    /// Current shadow map edge in texels (0 = governor shed the pass).
+    pub fn shadow_map_size(&self) -> u32 {
+        self.shadow_size
+    }
+
+    /// What anti-aliasing / reconstruction actually ran, at the current
+    /// quality state — the honest string every ledger prints.
+    pub fn aa_description(&self) -> String {
+        match self.aa_mode {
+            AaMode::Taa => {
+                let s = self.render_scale();
+                if s < 0.999 {
+                    format!(
+                        "temporal reconstruction {s:.2} -> 1.00 (jitter + history resolve at output resolution)"
+                    )
+                } else {
+                    "TAA (jitter + history resolve)".to_string()
+                }
+            }
+            AaMode::Fxaa => AaMode::Fxaa.describe().to_string(),
         }
     }
 
@@ -1141,12 +1379,34 @@ impl Renderer {
     /// Render one frame of the vista into `out_view`, lit and seasoned by
     /// `world` (the reality layer's reading for this instant and place).
     pub fn render(&mut self, out_view: &wgpu::TextureView, pose: &CameraPose, world: &WorldState, time: f32) {
-        let targets = self.targets.as_ref().expect("renderer sized");
-        let (internal_w, internal_h) = (targets.internal_w, targets.internal_h);
-        let aspect = targets.width as f32 / targets.height as f32;
+        let (internal_w, internal_h, aspect, out_w, out_h) = {
+            let t = self.targets.as_ref().expect("renderer sized");
+            (
+                t.internal_w,
+                t.internal_h,
+                t.width as f32 / t.height as f32,
+                t.width,
+                t.height,
+            )
+        };
         let view = Mat4::look_at_rh(pose.eye, pose.target, Vec3::Y);
         let proj = Mat4::perspective_rh(pose.fov_y_deg.to_radians(), aspect, 0.5, 4000.0);
         let view_proj = proj * view;
+
+        // ---- scene update through the ECS core: bind reality, cull ----
+        let sun_up = world.sun_elevation_deg > 0.0;
+        let light_vp = Self::light_view_proj(world.sun_dir);
+        let shadow_light = sun_up && self.shadow_size > 0;
+        let stats = self.vista.update(
+            &self.pool,
+            pose,
+            world,
+            view_proj,
+            light_vp,
+            shadow_light,
+        );
+        self.core_stats = stats;
+        let targets = self.targets.as_ref().expect("renderer sized");
 
         // TAA jitter: sub-pixel, Halton in the frame index (deterministic
         // for pinned runs). Jitter is baked into the rasterization matrix;
@@ -1178,9 +1438,11 @@ impl Renderer {
             view_proj
         };
 
-        let sun_up = world.sun_elevation_deg > 0.0;
-        let shadow_strength = smoothstep_cpu(1.0, 6.0, world.sun_elevation_deg);
-        let light_vp = Self::light_view_proj(world.sun_dir);
+        let shadow_strength = if self.shadow_size > 0 {
+            smoothstep_cpu(1.0, 6.0, world.sun_elevation_deg)
+        } else {
+            0.0 // governor shed the shadow pass: no shadow term at all
+        };
 
         let uniforms = Uniforms {
             view_proj: jittered_vp.to_cols_array_2d(),
@@ -1226,6 +1488,18 @@ impl Renderer {
                 world.daylight,
             ],
             misc: [time, shadow_strength, targets.scale, aspect],
+            // Governor-driven quality: x detail fade multiplier ·
+            // y water wave octaves · z shadow PCF texel size (0 = off).
+            quality: [
+                self.quality.detail_fade_mul,
+                self.quality.water_octaves as f32,
+                if self.shadow_size > 0 {
+                    1.0 / self.shadow_size as f32
+                } else {
+                    0.0
+                },
+                0.0,
+            ],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
@@ -1253,8 +1527,9 @@ impl Renderer {
                 label: Some("frame"),
             });
 
-        // ---- shadow pass (skipped outright when the sun is down) ----
-        if sun_up {
+        // ---- shadow pass (skipped outright when the sun is down, or
+        // when the governor has shed it) ----
+        if shadow_light {
             let ts = self.shadow_timer.as_ref().map(|t| t.writes());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow pass"),
@@ -1272,11 +1547,15 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.depth_bind_group, &[]);
             pass.set_pipeline(&self.depth_pipeline);
-            pass.set_vertex_buffer(0, self.terrain_vb.slice(..));
-            pass.set_index_buffer(self.terrain_ib.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.terrain_indices, 0, 0..1);
-            shadow_draws = 1;
-            draw_calls += 1;
+            for d in self.vista.shadow_draws() {
+                let tb = &self.tile_buffers[d.tile];
+                let slot = d.lod.slot();
+                pass.set_vertex_buffer(0, tb.vb.slice(..));
+                pass.set_index_buffer(tb.ibs[slot].slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..tb.counts[slot], 0, 0..1);
+                shadow_draws += 1;
+            }
+            draw_calls += shadow_draws;
         }
 
         // ---- scene pass ----
@@ -1308,15 +1587,21 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.terrain_pipeline);
-            pass.set_vertex_buffer(0, self.terrain_vb.slice(..));
-            pass.set_index_buffer(self.terrain_ib.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.terrain_indices, 0, 0..1);
+            let mut terrain_draws = 0u32;
+            for d in self.vista.draws() {
+                let tb = &self.tile_buffers[d.tile];
+                let slot = d.lod.slot();
+                pass.set_vertex_buffer(0, tb.vb.slice(..));
+                pass.set_index_buffer(tb.ibs[slot].slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..tb.counts[slot], 0, 0..1);
+                terrain_draws += 1;
+            }
             pass.set_pipeline(&self.water_pipeline);
             pass.draw(0..6, 0..1);
-            draw_calls += 3;
+            draw_calls += 1 + terrain_draws + 1;
         }
         if let Some(t) = &self.shadow_timer {
-            if sun_up {
+            if shadow_light {
                 t.arm(&mut encoder);
             }
         }
@@ -1364,8 +1649,8 @@ impl Renderer {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::Extent3d {
-                    width: internal_w,
-                    height: internal_h,
+                    width: out_w,
+                    height: out_h,
                     depth_or_array_layers: 1,
                 },
             );
@@ -1395,7 +1680,7 @@ impl Renderer {
         }
         self.queue.submit([encoder.finish()]);
 
-        if sun_up {
+        if shadow_light {
             if let Some(t) = &self.shadow_timer {
                 t.kick_readback();
             }
@@ -1411,7 +1696,11 @@ impl Renderer {
         self.frame_count += 1;
         self.last_draw_calls = draw_calls;
         self.last_shadow_draw_calls = shadow_draws;
-        self.last_shadow_active = sun_up;
+        self.last_shadow_active = shadow_light;
+        // Scene triangles: culled/LOD'd terrain + water (2) + sky (1) +
+        // blit (1).
+        self.last_tris = self.vista.cull.tris_after + 2 + 1 + 1;
+        self.last_shadow_tris = self.vista.cull.shadow_tris;
     }
 }
 
