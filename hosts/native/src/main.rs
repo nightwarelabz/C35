@@ -20,6 +20,8 @@
 //!        [--pose hero|grazing]
 //!        [--pin-level N | --governor] [--target-ms 16.7]
 //!        [--cull cpu|gpu] [--save-at 60,120] [--start-level N]
+//!        [--drift-rate R]  (rig-only: multiply the drift clock by R;
+//!        the M5 fast-pan stress. Shipped runs never set it.)
 //!
 //! M3 rig notes: the quality governor is **pinned at level 0 by
 //! default** in this host, so a proof run's output is a deterministic
@@ -179,6 +181,9 @@ fn main() {
         .unwrap_or(1.0);
     let out = arg_value(&args, "--out").unwrap_or_else(|| "hero.png".to_string());
     let drift = args.iter().any(|a| a == "--drift");
+    let drift_rate: f32 = arg_value(&args, "--drift-rate")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
     let pose_name = arg_value(&args, "--pose").unwrap_or_else(|| "hero".to_string());
     let pin_level: Option<usize> = arg_value(&args, "--pin-level").and_then(|v| v.parse().ok());
     let governor_live = args.iter().any(|a| a == "--governor");
@@ -277,7 +282,7 @@ fn main() {
     let mut update_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut printed_adj = 0usize;
     for i in 0..frames {
-        let t = if drift { i as f32 / 60.0 } else { 0.0 };
+        let t = if drift { i as f32 / 60.0 * drift_rate } else { 0.0 };
         let pose = pose_at(t);
         let start = Instant::now();
         renderer.render(&out_view, &pose, &world, t);
