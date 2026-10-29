@@ -20,6 +20,15 @@
 //! octaves — before it ever drops a frame it could have afforded. A pin
 //! is a pin: pinned, the governor only watches and reports.
 //!
+//! M4 pays M3's named debts. The terrain's steep faces get real relief
+//! (terrain generation v2, [`scene`]): domain warp + ridged displacement
+//! masked by slope, so the headwall has geometry for light to model.
+//! And culling moves onto the GPU where the backend carries compute:
+//! all tiles live in merged buffers, a compute pass runs the same
+//! visibility law as the CPU system and writes indirect draw arguments
+//! (the CPU system still owns the shadow list, and is the whole story
+//! on WebGL2). Every ledger names which culling ran.
+//!
 //! The house law: **if it costs, it shows.** Every frame is counted —
 //! draw calls per pass, triangles, render scale, tracked memory, frame
 //! time, and GPU pass times where the backend exposes timestamp queries.
@@ -185,6 +194,14 @@ impl PassTimer {
         }
     }
 
+    fn compute_writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            query_set: &self.query_set,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
+    }
+
     /// Encode resolve+copy (only when no readback is already in flight).
     fn arm(&self, encoder: &mut wgpu::CommandEncoder) {
         if !self.pending.load(Ordering::Relaxed) {
@@ -242,13 +259,121 @@ struct Targets {
     bytes: u64,
 }
 
-/// One terrain tile's GPU side: a single vertex buffer (the tile's
-/// full-res vertices plus the reduced LODs' skirt vertices) and one
-/// index buffer per LOD slot.
-struct TileBuffers {
-    vb: wgpu::Buffer,
-    ibs: [wgpu::Buffer; 3],
-    counts: [u32; 3],
+/// One tile's draw range inside the merged geometry buffers. The
+/// merged index buffer holds absolute indices (each tile's vertex
+/// offset baked in at build), so `base_vertex` is always 0 — WebGL2
+/// has no base-vertex draw and its backend panics if asked for one.
+/// Mirrored on the CPU (for the CPU cull path's draws) and in the GPU
+/// tile params.
+#[derive(Copy, Clone)]
+struct TileDrawParams {
+    first_index: u32,
+    index_count: u32,
+    base_vertex: i32,
+}
+
+/// Which visibility path draws the camera pass (M4).
+/// The CPU path is the M3 visibility system: it always runs (it owns
+/// the shadow-pass list) and it is the only path on WebGL2, which has
+/// no compute. The GPU path runs the same law in a compute pass
+/// (shaders/cull.wgsl) feeding indirect draws.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CullMode {
+    Cpu,
+    Gpu,
+}
+
+/// GPU mirror of the cull shader's TileParam (shaders/cull.wgsl).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GpuTileParam {
+    sphere: [f32; 4],
+    lod: [[u32; 4]; 3],
+}
+
+/// GPU mirror of the cull shader's CullUniforms.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct CullUniforms {
+    planes: [[f32; 4]; 6],
+    eye: [f32; 4],
+    dims: [u32; 4],
+}
+
+/// One indirect draw's arguments — the layout wgpu's
+/// draw_indexed_indirect reads, and the cull shader writes.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct DrawArgs {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+}
+
+const DRAW_ARGS_BYTES: u64 = 20;
+
+/// The GPU culling apparatus (native-class backends only): the compute
+/// pipeline, its buffers, and the readback that lets the ledger report
+/// the GPU path's own counts (decoded from the final frame's argument
+/// buffer — the render itself never waits on it).
+struct GpuCull {
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    uniform_buf: wgpu::Buffer,
+    args_buf: wgpu::Buffer,
+    readback_buf: Arc<wgpu::Buffer>,
+    pending: Arc<AtomicBool>,
+    snapshot: Arc<Mutex<Option<(usize, u64)>>>, // (tiles drawn, terrain tris)
+    timer: Option<PassTimer>,
+}
+
+impl GpuCull {
+    /// Encode the args→readback copy, but only when no map is in flight
+    /// (the PassTimer discipline: a mapped buffer cannot be a copy
+    /// target).
+    fn arm_readback(&self, encoder: &mut wgpu::CommandEncoder, bytes: u64) {
+        if !self.pending.load(Ordering::Relaxed) {
+            encoder.copy_buffer_to_buffer(&self.args_buf, 0, &self.readback_buf, 0, bytes);
+        }
+    }
+
+    /// After submit: map the readback and decode (tiles drawn, terrain
+    /// triangles) into the snapshot the ledger reads.
+    fn kick_readback(&self) {
+        if !self.pending.swap(true, Ordering::Relaxed) {
+            let pending = self.pending.clone();
+            let snapshot = self.snapshot.clone();
+            let buf_submit = self.readback_buf.clone();
+            let buf_cb = self.readback_buf.clone();
+            buf_submit
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    if result.is_ok() {
+                        {
+                            let range = buf_cb.slice(..).get_mapped_range();
+                            let args: &[DrawArgs] = bytemuck::cast_slice(&range);
+                            let mut drawn = 0usize;
+                            let mut tris = 0u64;
+                            for a in args {
+                                if a.index_count > 0 {
+                                    drawn += 1;
+                                    tris += (a.index_count / 3) as u64;
+                                }
+                            }
+                            *snapshot.lock().unwrap() = Some((drawn, tris));
+                        }
+                        buf_cb.unmap();
+                    }
+                    pending.store(false, Ordering::Relaxed);
+                });
+        }
+    }
+
+    fn snapshot(&self) -> Option<(usize, u64)> {
+        *self.snapshot.lock().unwrap()
+    }
 }
 
 pub struct Renderer {
@@ -276,8 +401,18 @@ pub struct Renderer {
     blit_sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
     shadow_bytes: u64,
-    tile_buffers: Vec<TileBuffers>,
+    /// M4: all tiles live in ONE vertex buffer and ONE index buffer
+    /// (every LOD of every tile), so an indirect draw can address any
+    /// tile/LOD by first_index alone (indices are absolute) — the
+    /// precondition for GPU culling. The CPU path draws ranges from
+    /// the same buffers.
+    merged_vb: wgpu::Buffer,
+    merged_ib: wgpu::Buffer,
+    tile_params: Vec<[TileDrawParams; 3]>,
     geometry_bytes: u64,
+    /// GPU culling apparatus (None on the WebGL2 path).
+    gpu_cull: Option<GpuCull>,
+    cull_mode: CullMode,
     // The M3 core: job pool, the ECS vista, the quality governor.
     pool: JobPool,
     vista: Vista,
@@ -909,30 +1044,47 @@ impl Renderer {
             .into_iter()
             .map(|t| t.expect("every tile generated"))
             .collect();
-        let mut tile_buffers: Vec<TileBuffers> = Vec::with_capacity(tiles.len());
+        // Merged geometry: every tile's vertices concatenated into one
+        // buffer, every LOD index list into another, each tile/LOD
+        // addressed by (first_index, index_count) into the merged index
+        // buffer. The indices are ABSOLUTE — each tile's vertex offset
+        // is baked into its index values at this merge — so every draw
+        // on every path carries base_vertex 0. That is a portability
+        // law, not a style choice: WebGL2 has no base-vertex draw, and
+        // wgpu's GL backend (glow) panics outright if a draw asks for
+        // one — the M4 web proof convicted exactly that. Both cull
+        // paths draw from these buffers: the CPU path by explicit
+        // ranges, the GPU path by indirect arguments the compute pass
+        // writes.
+        let mut tile_params: Vec<[TileDrawParams; 3]> = Vec::with_capacity(tiles.len());
         let mut tile_meta: Vec<(Vec3, f32, [u64; 3])> = Vec::with_capacity(tiles.len());
-        let mut geometry_bytes: u64 = 0;
+        let mut gpu_params: Vec<GpuTileParam> = Vec::with_capacity(tiles.len());
+        let mut all_vertices: Vec<scene::TerrainVertex> = Vec::new();
+        let mut all_indices: Vec<u32> = Vec::new();
         for tile in &tiles {
-            geometry_bytes +=
-                (tile.vertices.len() * std::mem::size_of::<scene::TerrainVertex>()) as u64;
-            let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("terrain tile vertices"),
-                contents: bytemuck::cast_slice(&tile.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let mut ibs: Vec<wgpu::Buffer> = Vec::with_capacity(3);
-            let mut counts = [0u32; 3];
+            let base_vertex = all_vertices.len() as u32;
+            all_vertices.extend_from_slice(&tile.vertices);
+            let mut params = [TileDrawParams {
+                first_index: 0,
+                index_count: 0,
+                base_vertex: 0,
+            }; 3];
+            let mut gpu_lod = [[0u32; 4]; 3];
             for (slot, idx) in tile.lod_indices.iter().enumerate() {
-                counts[slot] = idx.len() as u32;
-                geometry_bytes += (idx.len() * 4) as u64;
-                ibs.push(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("terrain tile indices"),
-                    contents: bytemuck::cast_slice(idx),
-                    usage: wgpu::BufferUsages::INDEX,
-                }));
+                let first_index = all_indices.len() as u32;
+                all_indices.extend(idx.iter().map(|&i| i + base_vertex));
+                params[slot] = TileDrawParams {
+                    first_index,
+                    index_count: idx.len() as u32,
+                    base_vertex: 0,
+                };
+                gpu_lod[slot] = [first_index, idx.len() as u32, 0, 0];
             }
-            let ibs: [wgpu::Buffer; 3] = ibs.try_into().ok().expect("three LOD index buffers");
-            tile_buffers.push(TileBuffers { vb, ibs, counts });
+            tile_params.push(params);
+            gpu_params.push(GpuTileParam {
+                sphere: [tile.center.x, tile.center.y, tile.center.z, tile.radius],
+                lod: gpu_lod,
+            });
             tile_meta.push((
                 tile.center,
                 tile.radius,
@@ -943,6 +1095,18 @@ impl Renderer {
                 ],
             ));
         }
+        let geometry_bytes = (all_vertices.len() * std::mem::size_of::<scene::TerrainVertex>()
+            + all_indices.len() * 4) as u64;
+        let merged_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain vertices (merged)"),
+            contents: bytemuck::cast_slice(&all_vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let merged_ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain indices (merged)"),
+            contents: bytemuck::cast_slice(&all_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
         let full_tris: u64 = tile_meta.iter().map(|m| m.2[0]).sum();
         let vista = Vista::new(&tile_meta);
         let governor = Governor::new(16.7);
@@ -956,6 +1120,129 @@ impl Renderer {
             )
         } else {
             (None, None)
+        };
+
+        // ---- GPU culling apparatus (M4): every backend with compute —
+        // i.e. everything except the WebGL2 fallback, which keeps the
+        // CPU visibility system as its whole path. ----
+        let gpu_cull = if adapter_info.backend != wgpu::Backend::Gl {
+            let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cull tile params"),
+                contents: bytemuck::cast_slice(&gpu_params),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let args_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cull indirect args"),
+                size: DRAW_ARGS_BYTES * scene::TILE_COUNT as u64,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let readback_buf = Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cull args readback"),
+                size: DRAW_ARGS_BYTES * scene::TILE_COUNT as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cull uniforms"),
+                size: std::mem::size_of::<CullUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("cull layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("cull bind group"),
+                layout: &layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: args_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: uniform_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("cull"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/cull.wgsl").into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("cull pipeline layout"),
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("cull pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            let timer = if features.contains(wgpu::Features::TIMESTAMP_QUERY) {
+                Some(PassTimer::new(&device, period_ns, "cull timestamps"))
+            } else {
+                None
+            };
+            Some(GpuCull {
+                pipeline,
+                bind_group,
+                uniform_buf,
+                args_buf,
+                readback_buf,
+                pending: Arc::new(AtomicBool::new(false)),
+                snapshot: Arc::new(Mutex::new(None)),
+                timer,
+            })
+        } else {
+            None
+        };
+        let cull_mode = if gpu_cull.is_some() {
+            CullMode::Gpu
+        } else {
+            CullMode::Cpu
         };
 
         // The shadow attachment view must outlive build(); keep it in the
@@ -987,8 +1274,12 @@ impl Renderer {
             blit_sampler,
             linear_sampler,
             shadow_bytes,
-            tile_buffers,
+            merged_vb,
+            merged_ib,
+            tile_params,
             geometry_bytes,
+            gpu_cull,
+            cull_mode,
             pool,
             vista,
             governor,
@@ -1220,9 +1511,57 @@ impl Renderer {
         self.vista.system_names()
     }
 
-    /// The visibility system's accounting from the most recent frame.
+    /// The frame's culling accounting. On the GPU path the camera-pass
+    /// fields come from the GPU's own argument buffer (readback of the
+    /// final frame's draws — the render never waits on it); the shadow
+    /// fields always come from the CPU visibility system, which owns
+    /// the caster list on every path.
     pub fn cull_stats(&self) -> vista::CullStats {
-        self.vista.cull
+        let mut c = self.vista.cull;
+        if self.cull_mode == CullMode::Gpu {
+            if let Some(gc) = &self.gpu_cull {
+                if let Some((drawn, tris)) = gc.snapshot() {
+                    c.tiles_drawn = drawn;
+                    c.tiles_culled = c.tiles_total - drawn;
+                    c.tris_after = tris;
+                }
+            }
+        }
+        c
+    }
+
+    /// Which culling path is drawing the camera pass.
+    pub fn cull_mode(&self) -> CullMode {
+        self.cull_mode
+    }
+
+    /// Ask for a culling path. A GPU request on a backend without the
+    /// apparatus (WebGL2) is refused silently — `cull_mode()` reports
+    /// the path actually in force, and every ledger prints it.
+    pub fn set_cull_mode(&mut self, mode: CullMode) {
+        self.cull_mode = match mode {
+            CullMode::Gpu if self.gpu_cull.is_none() => CullMode::Cpu,
+            m => m,
+        };
+    }
+
+    /// The honest one-liner every ledger prints about culling.
+    pub fn culling_description(&self) -> &'static str {
+        match self.cull_mode {
+            CullMode::Gpu => {
+                "GPU compute (tile frustum + LOD in a compute pass, indirect draws)"
+            }
+            CullMode::Cpu => "CPU visibility system",
+        }
+    }
+
+    /// Drain collected GPU cull-pass durations (empty unless the GPU
+    /// path ran with timestamp queries available).
+    pub fn drain_cull_samples(&self) -> Vec<f64> {
+        self.gpu_cull
+            .as_ref()
+            .and_then(|gc| gc.timer.as_ref().map(|t| t.drain()))
+            .unwrap_or_default()
     }
 
     pub fn governor(&self) -> &Governor {
@@ -1243,6 +1582,15 @@ impl Renderer {
             Some(l) => self.governor.pin_to(l),
             None => self.governor.unpin(),
         }
+        let s = self.governor.state();
+        self.apply_quality(s);
+    }
+
+    /// Place the governor's ladder at a level without pinning (rig
+    /// setup — the step-up proof starts partway down the ladder and
+    /// governs live from there). Not an adjustment; nothing is logged.
+    pub fn set_governor_start_level(&mut self, level: usize) {
+        self.governor.force_level(level);
         let s = self.governor.state();
         self.apply_quality(s);
     }
@@ -1527,6 +1875,33 @@ impl Renderer {
                 label: Some("frame"),
             });
 
+        // ---- GPU culling (M4): the compute pass runs the visibility
+        // law for the camera pass and writes the indirect arguments.
+        // The CPU system above already ran: it owns the shadow list on
+        // every path, and its counts are the fallback the ledger shows
+        // until the GPU readback lands. ----
+        if self.cull_mode == CullMode::Gpu {
+            let gc = self.gpu_cull.as_ref().expect("gpu cull apparatus");
+            let planes = vista::Frustum::from_view_proj(&view_proj).planes();
+            let cu = CullUniforms {
+                planes: planes.map(|p| p.to_array()),
+                eye: [pose.eye.x, pose.eye.y, pose.eye.z, 1.0],
+                dims: [scene::TILES_PER_SIDE, scene::TILE_COUNT as u32, 0, 0],
+            };
+            self.queue
+                .write_buffer(&gc.uniform_buf, 0, bytemuck::cast_slice(&[cu]));
+            let ts = gc.timer.as_ref().map(|t| t.compute_writes());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("gpu cull pass"),
+                timestamp_writes: ts,
+            });
+            pass.set_pipeline(&gc.pipeline);
+            pass.set_bind_group(0, &gc.bind_group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+            drop(pass);
+            gc.arm_readback(&mut encoder, DRAW_ARGS_BYTES * scene::TILE_COUNT as u64);
+        }
+
         // ---- shadow pass (skipped outright when the sun is down, or
         // when the governor has shed it) ----
         if shadow_light {
@@ -1547,12 +1922,15 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.depth_bind_group, &[]);
             pass.set_pipeline(&self.depth_pipeline);
+            pass.set_vertex_buffer(0, self.merged_vb.slice(..));
+            pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
             for d in self.vista.shadow_draws() {
-                let tb = &self.tile_buffers[d.tile];
-                let slot = d.lod.slot();
-                pass.set_vertex_buffer(0, tb.vb.slice(..));
-                pass.set_index_buffer(tb.ibs[slot].slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..tb.counts[slot], 0, 0..1);
+                let p = self.tile_params[d.tile][d.lod.slot()];
+                pass.draw_indexed(
+                    p.first_index..p.first_index + p.index_count,
+                    p.base_vertex,
+                    0..1,
+                );
                 shadow_draws += 1;
             }
             draw_calls += shadow_draws;
@@ -1587,18 +1965,38 @@ impl Renderer {
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.terrain_pipeline);
+            pass.set_vertex_buffer(0, self.merged_vb.slice(..));
+            pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
             let mut terrain_draws = 0u32;
-            for d in self.vista.draws() {
-                let tb = &self.tile_buffers[d.tile];
-                let slot = d.lod.slot();
-                pass.set_vertex_buffer(0, tb.vb.slice(..));
-                pass.set_index_buffer(tb.ibs[slot].slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..tb.counts[slot], 0, 0..1);
-                terrain_draws += 1;
+            if self.cull_mode == CullMode::Gpu {
+                // One indirect draw per tile slot; culled tiles carry a
+                // zero index count written by the cull pass.
+                let args = &self.gpu_cull.as_ref().expect("gpu cull apparatus").args_buf;
+                for slot in 0..scene::TILE_COUNT {
+                    pass.draw_indexed_indirect(args, slot as u64 * DRAW_ARGS_BYTES);
+                    terrain_draws += 1;
+                }
+            } else {
+                for d in self.vista.draws() {
+                    let p = self.tile_params[d.tile][d.lod.slot()];
+                    pass.draw_indexed(
+                        p.first_index..p.first_index + p.index_count,
+                        p.base_vertex,
+                        0..1,
+                    );
+                    terrain_draws += 1;
+                }
             }
             pass.set_pipeline(&self.water_pipeline);
             pass.draw(0..6, 0..1);
             draw_calls += 1 + terrain_draws + 1;
+        }
+        if self.cull_mode == CullMode::Gpu {
+            if let Some(gc) = &self.gpu_cull {
+                if let Some(t) = &gc.timer {
+                    t.arm(&mut encoder);
+                }
+            }
         }
         if let Some(t) = &self.shadow_timer {
             if shadow_light {
@@ -1688,6 +2086,14 @@ impl Renderer {
         if let Some(t) = &self.scene_timer {
             t.kick_readback();
         }
+        if self.cull_mode == CullMode::Gpu {
+            if let Some(gc) = &self.gpu_cull {
+                if let Some(t) = &gc.timer {
+                    t.kick_readback();
+                }
+                gc.kick_readback();
+            }
+        }
 
         self.prev_view_proj = view_proj;
         if self.aa_mode == AaMode::Taa {
@@ -1698,8 +2104,10 @@ impl Renderer {
         self.last_shadow_draw_calls = shadow_draws;
         self.last_shadow_active = shadow_light;
         // Scene triangles: culled/LOD'd terrain + water (2) + sky (1) +
-        // blit (1).
-        self.last_tris = self.vista.cull.tris_after + 2 + 1 + 1;
+        // blit (1). On the GPU path the terrain term is the readback
+        // snapshot (a frame behind while the camera moves; exact at
+        // any held pose).
+        self.last_tris = self.cull_stats().tris_after + 2 + 1 + 1;
         self.last_shadow_tris = self.vista.cull.shadow_tris;
     }
 }

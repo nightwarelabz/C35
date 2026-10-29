@@ -109,6 +109,12 @@ impl Frustum {
             p.x * center.x + p.y * center.y + p.z * center.z + p.w >= -radius
         })
     }
+
+    /// The six inward planes as vec4s — the exact floats the GPU cull
+    /// pass (M4) tests against, so both paths judge the same frustum.
+    pub fn planes(&self) -> [Vec4; 6] {
+        self.planes
+    }
 }
 
 /// LOD step (0 = Full, 1 = Half, 2 = Quarter) for a sphere at `dist`
@@ -393,10 +399,13 @@ fn sys_visibility(v: &mut Vista, pool: &JobPool) {
 
 /// Keep neighbouring tiles within one LOD step of each other: a tile may
 /// not be coarser than (finest neighbour step + 1). Relaxation over the
-/// 4×4 grid — a handful of passes at most, deterministic.
+/// grid to its fixed point (cap 8 passes, early-out when stable) — the
+/// GPU cull pass (M4, shaders/cull.wgsl) runs the identical in-place
+/// relaxation in the identical scan order, so both paths land on the
+/// same LOD assignment, not merely similar ones.
 fn clamp_neighbours(vis: &mut [TileVis]) {
     let n = TILES_PER_SIDE as usize;
-    for _ in 0..4 {
+    for _ in 0..8 {
         let mut changed = false;
         for tj in 0..n {
             for ti in 0..n {

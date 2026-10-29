@@ -19,6 +19,7 @@
 //!        [--scale 1.0] [--out hero.png] [--drift]
 //!        [--pose hero|grazing]
 //!        [--pin-level N | --governor] [--target-ms 16.7]
+//!        [--cull cpu|gpu] [--save-at 60,120] [--start-level N]
 //!
 //! M3 rig notes: the quality governor is **pinned at level 0 by
 //! default** in this host, so a proof run's output is a deterministic
@@ -182,6 +183,18 @@ fn main() {
     let pin_level: Option<usize> = arg_value(&args, "--pin-level").and_then(|v| v.parse().ok());
     let governor_live = args.iter().any(|a| a == "--governor");
     let target_ms: Option<f64> = arg_value(&args, "--target-ms").and_then(|v| v.parse().ok());
+    // M4 rig seams: culling path override, governor start level (for
+    // the step-up proof), and per-frame PNG saves (for the motion A/B).
+    let cull_arg = arg_value(&args, "--cull");
+    let start_level: Option<usize> =
+        arg_value(&args, "--start-level").and_then(|v| v.parse().ok());
+    let save_at: Vec<usize> = arg_value(&args, "--save-at")
+        .map(|v| {
+            v.split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
 
     let reality = resolve_reality();
     let world = reality.world;
@@ -195,12 +208,26 @@ fn main() {
         scale,
     ));
 
+    // Culling path (before any frame): the renderer's default is the
+    // GPU compute path where the backend carries it; the rig can force
+    // either path for the parity proofs.
+    match cull_arg.as_deref() {
+        Some("cpu") => renderer.set_cull_mode(c35::CullMode::Cpu),
+        Some("gpu") => renderer.set_cull_mode(c35::CullMode::Gpu),
+        _ => {}
+    }
+
     // Governor setup (before any frame): target, then pin or live.
     if let Some(t) = target_ms {
         renderer.set_governor_target(t);
     }
     let gov_mode = if governor_live {
-        "live (unpinned)".to_string()
+        if let Some(lvl) = start_level {
+            renderer.set_governor_start_level(lvl);
+            format!("live (unpinned), starting at level {lvl}")
+        } else {
+            "live (unpinned)".to_string()
+        }
     } else {
         let lvl = pin_level.unwrap_or(0);
         renderer.pin_governor(Some(lvl));
@@ -258,6 +285,12 @@ fn main() {
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         frame_ms.push(ms);
         update_ms.push(renderer.core_stats().update_ms);
+        if save_at.contains(&i) {
+            // Paired-frame evidence (the motion A/B): the same frame
+            // index in two runs is the same drift instant, bit for bit.
+            let stem = out.strip_suffix(".png").unwrap_or(&out);
+            save_png(&renderer, &out_tex, width, height, &format!("{stem}-f{i}.png"));
+        }
         // The governor eats the same number the ledger reports; in live
         // mode its adjustments print as they happen.
         renderer.observe_frame_ms(ms);
@@ -273,6 +306,7 @@ fn main() {
         }
     }
     let (shadow_ms, gpu_ms) = renderer.drain_gpu_samples();
+    let cull_ms = renderer.drain_cull_samples();
 
     save_png(&renderer, &out_tex, width, height, &out);
 
@@ -356,6 +390,18 @@ fn main() {
         c35::mean(&update_ms),
         cull.tiles_total
     );
+    println!("culling          : {}", renderer.culling_description());
+    if renderer.cull_mode() == c35::CullMode::Gpu {
+        if cull_ms.is_empty() {
+            println!("gpu cull pass    : n/a (timestamp queries not exposed by this backend)");
+        } else {
+            println!(
+                "gpu cull pass    : mean {:.3} ms over {} samples [wgpu timestamp queries]",
+                c35::mean(&cull_ms),
+                cull_ms.len()
+            );
+        }
+    }
     println!(
         "tiles (camera)   : {} drawn, {} culled of {}",
         cull.tiles_drawn, cull.tiles_culled, cull.tiles_total

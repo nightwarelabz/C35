@@ -115,6 +115,18 @@ impl Governor {
         self.target_ms = target_ms;
     }
 
+    /// Place the ladder at a level WITHOUT pinning and WITHOUT logging
+    /// an adjustment — a rig/setup operation (the proof host's
+    /// `--start-level`, used to prove the step-up law from partway
+    /// down the ladder). The governor then governs live from there.
+    pub fn force_level(&mut self, level: usize) {
+        let level = level.min(MAX_LEVEL);
+        self.level = level;
+        self.state = quality_at(level);
+        self.since_change = 0;
+        self.headroom_evals = 0;
+    }
+
     /// Pin the governor at a level (clamped). From this call on it only
     /// watches and reports.
     pub fn pin_to(&mut self, level: usize) {
