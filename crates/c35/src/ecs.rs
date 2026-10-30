@@ -21,6 +21,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
+use std::{any::Any, cell::Cell, panic::{catch_unwind, resume_unwind, AssertUnwindSafe}};
+
+thread_local! {
+    // A nested batch must run inline: waiting for the same pool from
+    // all of its workers would otherwise starve the queue.
+    static IN_WORKER: Cell<bool> = const { Cell::new(false) };
+}
 
 /// An entity: just an ID. Components are looked up by it in arenas.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -31,11 +38,12 @@ pub struct Entity(pub u32);
 /// deterministic on every target, which the proof runs rely on.
 pub struct Arena<T> {
     slots: Vec<Option<T>>,
+    live: usize,
 }
 
 impl<T> Arena<T> {
     pub fn new() -> Arena<T> {
-        Arena { slots: Vec::new() }
+        Arena { slots: Vec::new(), live: 0 }
     }
 
     pub fn insert(&mut self, e: Entity, value: T) {
@@ -43,7 +51,9 @@ impl<T> Arena<T> {
         if i >= self.slots.len() {
             self.slots.resize_with(i + 1, || None);
         }
-        self.slots[i] = Some(value);
+        if self.slots[i].replace(value).is_none() {
+            self.live += 1;
+        }
     }
 
     pub fn get(&self, e: Entity) -> Option<&T> {
@@ -63,11 +73,28 @@ impl<T> Arena<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
+        self.live
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn remove(&mut self, e: Entity) -> Option<T> {
+        let value = self.slots.get_mut(e.0 as usize)?.take()?;
+        self.live -= 1;
+        Some(value)
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
+        self.slots.iter_mut().enumerate()
+            .filter_map(|(i, slot)| slot.as_mut().map(|v| (Entity(i as u32), v)))
+    }
+
+    /// Remove all components while retaining arena capacity for reuse.
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.live = 0;
     }
 }
 
@@ -130,7 +157,10 @@ impl JobPool {
     }
 
     pub fn with_workers(n: usize) -> JobPool {
-        let n = n.max(1);
+        // Explicit zero-worker mode also makes headless deterministic
+        // tests and single-threaded hosts independent of thread support.
+        #[cfg(target_arch = "wasm32")]
+        let n = { let _ = n; 0 };
         let (tx, rx) = channel::<Job>();
         let rx = Arc::new(Mutex::new(rx));
         let executed = Arc::new(AtomicU64::new(0));
@@ -155,8 +185,10 @@ impl JobPool {
                     };
                     match job {
                         Ok(job) => {
-                            job();
                             executed.fetch_add(1, Ordering::Relaxed);
+                            IN_WORKER.with(|flag| flag.set(true));
+                            job();
+                            IN_WORKER.with(|flag| flag.set(false));
                         }
                         Err(_) => return, // pool dropped: shut down
                     }
@@ -204,13 +236,15 @@ impl JobPool {
         // Pool size 0 = inline mode (no worker threads exist on this
         // target): the whole buffer is one chunk, run on the caller.
         let chunks = chunks.clamp(1, self.workers.max(1)).min(len);
-        if chunks == 1 {
+        if chunks == 1 || IN_WORKER.with(Cell::get) {
+            self.executed.fetch_add(1, Ordering::Relaxed);
             f(0, buf);
             return;
         }
         let base = buf.as_mut_ptr() as usize;
         let f_addr = f as *const F as usize;
         let latch = Arc::new(Latch::new(chunks));
+        let panic: Arc<Mutex<Option<Box<dyn Any + Send>>>> = Arc::new(Mutex::new(None));
         let chunk_len = len.div_ceil(chunks);
         for c in 0..chunks {
             let start = c * chunk_len;
@@ -220,6 +254,7 @@ impl JobPool {
             }
             let n = chunk_len.min(len - start);
             let latch = latch.clone();
+            let panic = panic.clone();
             let job: Job = Box::new(move || {
                 // SAFETY: disjoint range of the caller's slice (see the
                 // method docs); the caller blocks on the latch, so the
@@ -227,7 +262,15 @@ impl JobPool {
                 let slice =
                     unsafe { std::slice::from_raw_parts_mut((base as *mut T).add(start), n) };
                 let f_ref = unsafe { &*(f_addr as *const F) };
-                f_ref(start, slice);
+                // Drain EVERY borrowed chunk before propagating a panic
+                // on the caller. Workers survive and the scoped pointers
+                // never outlive the borrowed buffer or closure.
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| f_ref(start, slice))) {
+                    let mut first = panic.lock().unwrap();
+                    if first.is_none() {
+                        *first = Some(payload);
+                    }
+                }
                 latch.count_down();
             });
             // A failed send means every worker is gone (impossible while
@@ -239,6 +282,10 @@ impl JobPool {
             }
         }
         latch.wait();
+        let payload = panic.lock().unwrap().take();
+        if let Some(payload) = payload {
+            resume_unwind(payload);
+        }
     }
 }
 
@@ -271,3 +318,4 @@ pub struct CoreStats {
     pub pool_size: usize,
     pub update_ms: f64,
 }
+
