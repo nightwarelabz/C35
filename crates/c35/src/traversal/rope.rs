@@ -220,43 +220,47 @@ impl Grapple {
                     });
                 }
             }
-            GrappleState::Flying { pos, vel, travelled } => {
+            GrappleState::Flying {
+                pos,
+                vel,
+                travelled,
+            } => {
                 if !input.held {
                     next = Some(GrappleState::Idle);
                     self.waiting_release = true;
                 } else {
                     let step = *vel * dt;
                     let to = *pos + step;
-                    *travelled += step.length();
-                    if *travelled >= MAX_LINE {
-                        // Beyond line length: no connect. The
-                        // claw falls — visible, priced failure.
-                        events.push(
-                            tick,
-                            StimulusKind::StrikeFail,
-                            *pos,
-                            SurfaceRecord::dry(SurfaceKind::Metal),
-                            0.5,
-                        );
-                        next = Some(GrappleState::Idle);
-                        self.waiting_release = true;
-                    } else if let Some(hit) = world.segment_hit(*pos, to) {
-                        if hit.surface.biteable() {
-                            // Latch: stop dead, impact sound at
-                            // the strike point, no slide, no bounce.
+                    let step_len = step.length();
+                    // A hit along this step is judged by where the
+                    // claw meets the surface, not by where the step
+                    // would have ended. The old order added the full
+                    // step first and then refused the strike whenever
+                    // that endpoint crossed MAX_LINE, so a wall a few
+                    // centimetres inside the line was a miss.
+                    if let Some(hit) = world.segment_hit(*pos, to) {
+                        let arrive = *travelled + hit.dist;
+                        if arrive > MAX_LINE {
+                            let used = (MAX_LINE - *travelled).max(0.0);
+                            let at = *pos + (to - *pos) * (used / step_len.max(1e-6));
                             events.push(
                                 tick,
-                                StimulusKind::Strike,
-                                hit.point,
-                                hit.surface,
-                                1.0,
+                                StimulusKind::StrikeFail,
+                                at,
+                                SurfaceRecord::dry(SurfaceKind::Metal),
+                                0.5,
                             );
-                            let len =
-                                (hit.point - origin).length().max(MIN_ROPE);
+                            next = Some(GrappleState::Idle);
+                            self.waiting_release = true;
+                        } else if hit.surface.biteable() {
+                            *travelled = arrive;
+                            // Latch: stop dead, impact sound at
+                            // the strike point, no slide, no bounce.
+                            events.push(tick, StimulusKind::Strike, hit.point, hit.surface, 1.0);
+                            let len = (hit.point - origin).length().max(MIN_ROPE);
                             let mut rope = Vec::with_capacity(ROPE_POINTS);
                             let mut prev = Vec::with_capacity(ROPE_POINTS);
-                            let attach = body.feet
-                                + Vec3::new(0.0, ATTACH_HEIGHT, 0.0);
+                            let attach = body.feet + Vec3::new(0.0, ATTACH_HEIGHT, 0.0);
                             for i in 0..ROPE_POINTS {
                                 let t = i as f32 / (ROPE_POINTS - 1) as f32;
                                 let p = hit.point.lerp(attach, t);
@@ -283,7 +287,20 @@ impl Grapple {
                             self.waiting_release = true;
                         }
                     } else {
-                        *pos = to;
+                        *travelled += step_len;
+                        if *travelled >= MAX_LINE {
+                            events.push(
+                                tick,
+                                StimulusKind::StrikeFail,
+                                *pos,
+                                SurfaceRecord::dry(SurfaceKind::Metal),
+                                0.5,
+                            );
+                            next = Some(GrappleState::Idle);
+                            self.waiting_release = true;
+                        } else {
+                            *pos = to;
+                        }
                     }
                 }
             }
@@ -334,9 +351,23 @@ impl Grapple {
                                 continue;
                             }
                             let diff = (dist - rest) / dist;
-                            let w0 = if i == 0 { 0.0 } else { 0.5 };
-                            let w1 = if i + 1 == ROPE_POINTS - 1 {
+                            // A pinned end cannot move, so the free
+                            // end has to take the whole correction.
+                            // Splitting 0.5/0.5 against a pin leaves
+                            // half the error in place every iteration.
+                            let pin0 = i == 0;
+                            let pin1 = i + 1 == ROPE_POINTS - 1;
+                            let w0 = if pin0 {
                                 0.0
+                            } else if pin1 {
+                                1.0
+                            } else {
+                                0.5
+                            };
+                            let w1 = if pin1 {
+                                0.0
+                            } else if pin0 {
+                                1.0
                             } else {
                                 0.5
                             };
@@ -352,8 +383,7 @@ impl Grapple {
                                 let d = delta.length();
                                 if d < CAPSULE_RADIUS * 0.5 {
                                     if d > 1e-6 {
-                                        pushed = cp
-                                            + delta * ((CAPSULE_RADIUS * 0.5) / d);
+                                        pushed = cp + delta * ((CAPSULE_RADIUS * 0.5) / d);
                                     } else {
                                         pushed.y = b.max.y + CAPSULE_RADIUS * 0.5;
                                     }
@@ -395,5 +425,147 @@ impl Grapple {
             state = n;
         }
         self.state = state;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traversal::events::EventLog;
+    use crate::traversal::physics::{Body, BoxCollider, StaticWorld, FIXED_DT};
+    use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
+
+    fn hold() -> HookInput {
+        HookInput {
+            press: false,
+            held: true,
+            crouch: false,
+        }
+    }
+
+    #[test]
+    fn strike_inside_max_line_latches_when_the_step_would_overshoot() {
+        let mut world = StaticWorld::new();
+        // Just inside the 40 m line. One claw step is 40/240 m,
+        // so the step that reaches this wall ends past MAX_LINE.
+        world.add(BoxCollider::new(
+            Vec3::new(-1.0, 0.0, 39.90),
+            Vec3::new(1.0, 4.0, 40.20),
+            SurfaceRecord::dry(SurfaceKind::Brick),
+        ));
+        let mut g = Grapple::new();
+        let mut body = Body::new(Vec3::ZERO);
+        let mut events = EventLog::new();
+        let origin = Vec3::new(0.0, 1.4, 0.0);
+        g.update(
+            FIXED_DT,
+            HookInput {
+                press: true,
+                held: true,
+                crouch: false,
+            },
+            origin,
+            Vec3::Z,
+            &mut body,
+            &world,
+            &mut events,
+            1,
+        );
+        for t in 2..600 {
+            g.update(
+                FIXED_DT,
+                hold(),
+                origin,
+                Vec3::Z,
+                &mut body,
+                &world,
+                &mut events,
+                t,
+            );
+            if g.is_latched() {
+                break;
+            }
+        }
+        assert!(
+            g.is_latched(),
+            "a wall inside MAX_LINE must latch, not fail because the step endpoint is past it"
+        );
+    }
+
+    #[test]
+    fn latched_segments_stay_near_rest_length() {
+        let mut world = StaticWorld::new();
+        world.add(BoxCollider::new(
+            Vec3::new(-1.0, 0.0, 6.0),
+            Vec3::new(1.0, 4.0, 6.4),
+            SurfaceRecord::dry(SurfaceKind::Brick),
+        ));
+        let mut g = Grapple::new();
+        let mut body = Body::new(Vec3::ZERO);
+        let mut events = EventLog::new();
+        let origin = Vec3::new(0.0, 1.4, 0.0);
+        g.update(
+            FIXED_DT,
+            HookInput {
+                press: true,
+                held: true,
+                crouch: false,
+            },
+            origin,
+            Vec3::Z,
+            &mut body,
+            &world,
+            &mut events,
+            1,
+        );
+        for t in 2..200 {
+            g.update(
+                FIXED_DT,
+                hold(),
+                origin,
+                Vec3::Z,
+                &mut body,
+                &world,
+                &mut events,
+                t,
+            );
+            if g.is_latched() {
+                break;
+            }
+        }
+        assert!(g.is_latched());
+        // Hold the body where it latched and let gravity sag the
+        // chain. The pins are a satisfiable distance apart, so
+        // every segment can sit on the rest length. Pulling the
+        // body past `len` cannot: the line is shorter than the
+        // span on purpose, and the segments must stretch.
+        for t in 0..12 {
+            let feet = body.feet;
+            g.update(
+                FIXED_DT,
+                hold(),
+                origin,
+                Vec3::Z,
+                &mut body,
+                &world,
+                &mut events,
+                t,
+            );
+            body.feet = feet;
+            body.vel = Vec3::ZERO;
+        }
+        let GrappleState::Latched { rope, len, .. } = &g.state else {
+            panic!("still latched");
+        };
+        let rest = len / (ROPE_POINTS - 1) as f32;
+        let mut worst = 0.0f32;
+        for w in rope.windows(2) {
+            let err = (w[1] - w[0]).length() - rest;
+            worst = worst.max(err.abs());
+        }
+        assert!(
+            worst < rest * 0.08,
+            "segment error {worst} against rest {rest}"
+        );
     }
 }
