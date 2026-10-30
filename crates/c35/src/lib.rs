@@ -51,6 +51,7 @@ pub mod locomotion;
 pub mod modding;
 pub mod noise;
 pub mod operator;
+pub mod perception;
 pub mod props;
 pub mod scene;
 pub mod traversal;
