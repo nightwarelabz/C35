@@ -41,7 +41,7 @@ pub use voices::{
     cannon_cool_voice, churr_voice, grapple_detach_voice, grapple_launch_voice,
     grapple_reel_chunk, landing_voice, mantle_voice, report_murmur_voice, scream_voice,
     seam_tick_voice, servo_chunk, sever_ring_voice, strike_fail_voice, strike_voice,
-    tremor_voice,
+    tremor_voice, visor_power_off_voice, visor_power_on_voice, visor_tag_voice,
 };
 
 use crate::traversal::events::StimulusKind;
@@ -72,10 +72,16 @@ pub enum VoiceKind {
     /// Procedural rain bed. Sticky, not a one-shot. Added at the
     /// end so existing ledger indices do not move.
     Rain = 17,
+    /// The visor system's signature voices — the operator's own
+    /// equipment, heard at the ear. Appended after Rain so the
+    /// existing ledger indices still do not move.
+    VisorPowerOn = 18,
+    VisorPowerOff = 19,
+    VisorTag = 20,
 }
 
 impl VoiceKind {
-    pub const COUNT: usize = 18;
+    pub const COUNT: usize = 21;
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -97,6 +103,9 @@ impl VoiceKind {
             VoiceKind::Churr => "churr",
             VoiceKind::Music => "music",
             VoiceKind::Rain => "rain",
+            VoiceKind::VisorPowerOn => "visoron",
+            VoiceKind::VisorPowerOff => "visoroff",
+            VoiceKind::VisorTag => "visortag",
         }
     }
 
@@ -132,6 +141,9 @@ impl VoiceKind {
             15 => VoiceKind::Churr,
             16 => VoiceKind::Music,
             17 => VoiceKind::Rain,
+            18 => VoiceKind::VisorPowerOn,
+            19 => VoiceKind::VisorPowerOff,
+            20 => VoiceKind::VisorTag,
             _ => VoiceKind::Music,
         }
     }
