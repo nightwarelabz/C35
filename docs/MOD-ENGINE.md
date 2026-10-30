@@ -7,6 +7,12 @@ reuse props we have made or make their own."
 Status: SPEC ONLY. No tree edits, no repo writes. The implementer is the
 build crew; the audience is Chase and that crew.
 
+> **Status as of c158214:** v1 is implemented in `crates/c35/src/modding/`
+> (registry, strict JSON parser, loader, validator), with the example mod
+> at `crates/c35/example-mods/example-street/`. In this repo the validator
+> runs as `cargo run -p c35 --example check_mod -- <mod dir>`;
+> `--check-mod` is the DeBrief game binary's flag. v2/v3 remain spec.
+
 ## 0. The one-sentence shape
 
 A mod is a folder of text files. It names props from the game's own
@@ -384,7 +390,8 @@ No Rust toolchain. No compiler. A text editor and the game. Six steps:
    mod's manifest and change the names — the example is the template).
 3. Write `props/fruit-cart.json`: parts from the engine's vocabulary,
    materials by painter name, footprint and tags. The shipped example
-   mod contains a commented prop file to copy.
+   mod contains a prop file to copy (strict JSON — no comments; its
+   README explains each field).
 4. Write `placements.json`: one rule — e.g. "place `my-first-prop:
    fruit-cart` on street `mercer-street`, kerb side east, every
    12 metres, facing the road." Placement is by rule and anchor, not
@@ -393,7 +400,8 @@ No Rust toolchain. No compiler. A text editor and the game. Six steps:
    fragile ("this placement will not follow a rebuilt street").
 5. Run the validator: `debrief --check-mod mods/my-first-prop` prints
    errors with file names and line numbers, or "mod valid: 1 prop,
-   1 placement, 84 triangles, 2 atlas tiles." Fix errors until it
+   1 placement, 84 triangles, 0 atlas tiles." (v1 mods define no new
+   atlas tiles.) Fix errors until it
    says valid — the loop is seconds, not a build cycle.
 6. Launch the game, open Mods in the menu, enable `my-first-prop`,
    walk Mercer Street. The prop is there, lit by the same lamps,
