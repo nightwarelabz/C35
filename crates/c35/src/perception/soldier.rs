@@ -229,17 +229,14 @@ impl SoldierBrain {
         // Gain: degradation terms multiply attention gain
         // down. Rain, cold, fear, grace — one multiplier,
         // never special cases.
-        let gain = (1.0 - 0.3 * input.rain - 0.2 * input.cold - 0.3 * self.fear)
-            .max(0.2)
+        let gain = (1.0 - 0.3 * input.rain - 0.2 * input.cold - 0.3 * self.fear).max(0.2)
             * (1.0 - 0.7 * input.grace);
 
         // Checkpoint overrides patrol sense while engaged.
         if input.at_checkpoint
             && matches!(
                 self.state,
-                SoldierState::Patrol
-                    | SoldierState::Suspicious
-                    | SoldierState::Checkpoint
+                SoldierState::Patrol | SoldierState::Suspicious | SoldierState::Checkpoint
             )
         {
             self.set_state(SoldierState::Checkpoint);
@@ -251,8 +248,8 @@ impl SoldierBrain {
         // remembered as a last known position.
         if input.visibility > 0.0 {
             if let Some(p) = input.target_pos {
-                let wobbled =
-                    input.visibility * (1.0 + crate::perception::pricing::wobble(self.tick, self.id));
+                let wobbled = input.visibility
+                    * (1.0 + crate::perception::pricing::wobble(self.tick, self.id));
                 self.attention.observe(wobbled, gain);
                 if wobbled > self.attention.notice {
                     self.memory.see(p);
@@ -372,9 +369,7 @@ impl SoldierBrain {
                 let next = self.route.get(self.route_i).copied();
                 (PostureSignal::AtEase, None, next)
             }
-            SoldierState::Suspicious => {
-                (PostureSignal::Alert, None, self.memory.lkp)
-            }
+            SoldierState::Suspicious => (PostureSignal::Alert, None, self.memory.lkp),
             SoldierState::Search => (
                 PostureSignal::Searching,
                 if self.ticks_in_state == 1 {
@@ -414,73 +409,138 @@ impl SoldierBrain {
     /// phase; flight or refusal advances it. A phase that
     /// never advances is a stuck soldier, so every phase
     /// has a timer and every timer has an exit.
+    ///
+    /// Advance and report are separate. The old match
+    /// returned the phase it had already left, so the
+    /// host was told Questioning on the tick the brain
+    /// had moved to Detention. Force also spoke
+    /// ContactCall on every tick (240 Hz), not once.
     fn tick_checkpoint(&mut self, input: &SoldierInput, yielding: bool) -> SoldierOutput {
         self.checkpoint_ticks += 1;
         // 240 Hz fixed step: 2 s = 480 ticks, 4 s = 960.
         match self.checkpoint_phase {
             CheckpointPhase::Question => {
                 if input.papers == PapersState::Valid {
-                    self.set_state(SoldierState::Patrol);
-                    return SoldierOutput {
-                        state: SoldierState::Patrol,
-                        posture: PostureSignal::AtEase,
-                        voice: Some(VoiceLine::StandDown),
-                        move_to: self.route.get(self.route_i).copied(),
-                        yielding,
-                    };
+                    return self.release_checkpoint(yielding);
                 }
                 if !input.compliant || self.checkpoint_ticks > 480 {
                     self.checkpoint_phase = CheckpointPhase::Detention;
                     self.checkpoint_ticks = 0;
                 }
-                SoldierOutput {
-                    state: SoldierState::Checkpoint,
-                    posture: PostureSignal::Questioning,
-                    voice: if self.checkpoint_ticks == 1 {
-                        Some(VoiceLine::Halt)
-                    } else if self.checkpoint_ticks == 2 {
-                        Some(VoiceLine::Papers)
-                    } else {
-                        None
-                    },
-                    move_to: None,
-                    yielding,
-                }
             }
             CheckpointPhase::Detention => {
                 if input.papers == PapersState::Valid && input.compliant {
-                    self.set_state(SoldierState::Patrol);
-                    return SoldierOutput {
-                        state: SoldierState::Patrol,
-                        posture: PostureSignal::AtEase,
-                        voice: Some(VoiceLine::StandDown),
-                        move_to: self.route.get(self.route_i).copied(),
-                        yielding,
-                    };
+                    return self.release_checkpoint(yielding);
                 }
                 if !input.compliant || self.checkpoint_ticks > 960 {
                     self.checkpoint_phase = CheckpointPhase::Force;
                     self.checkpoint_ticks = 0;
                 }
-                SoldierOutput {
-                    state: SoldierState::Checkpoint,
-                    posture: PostureSignal::Detaining,
-                    voice: if self.checkpoint_ticks == 1 {
-                        Some(VoiceLine::StepAside)
-                    } else {
-                        None
-                    },
-                    move_to: None,
-                    yielding,
-                }
             }
-            CheckpointPhase::Force => SoldierOutput {
-                state: SoldierState::Checkpoint,
-                posture: PostureSignal::Aiming,
-                voice: Some(VoiceLine::ContactCall),
-                move_to: None,
-                yielding,
-            },
+            CheckpointPhase::Force => {}
         }
+        self.checkpoint_output(yielding)
+    }
+
+    fn release_checkpoint(&mut self, yielding: bool) -> SoldierOutput {
+        self.set_state(SoldierState::Patrol);
+        SoldierOutput {
+            state: SoldierState::Patrol,
+            posture: PostureSignal::AtEase,
+            voice: Some(VoiceLine::StandDown),
+            move_to: self.route.get(self.route_i).copied(),
+            yielding,
+        }
+    }
+
+    /// Output for the phase in force after this tick's
+    /// advance. Entry lines fire on tick 1 of that phase
+    /// only — a line every tick is a stuck shout.
+    fn checkpoint_output(&self, yielding: bool) -> SoldierOutput {
+        let (posture, voice) = match self.checkpoint_phase {
+            CheckpointPhase::Question => (
+                PostureSignal::Questioning,
+                if self.checkpoint_ticks == 1 {
+                    Some(VoiceLine::Halt)
+                } else if self.checkpoint_ticks == 2 {
+                    Some(VoiceLine::Papers)
+                } else {
+                    None
+                },
+            ),
+            CheckpointPhase::Detention => (
+                PostureSignal::Detaining,
+                if self.checkpoint_ticks == 1 {
+                    Some(VoiceLine::StepAside)
+                } else {
+                    None
+                },
+            ),
+            CheckpointPhase::Force => (
+                PostureSignal::Aiming,
+                if self.checkpoint_ticks == 1 {
+                    Some(VoiceLine::ContactCall)
+                } else {
+                    None
+                },
+            ),
+        };
+        SoldierOutput {
+            state: SoldierState::Checkpoint,
+            posture,
+            voice,
+            move_to: None,
+            yielding,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn checkpoint(papers: PapersState, compliant: bool) -> SoldierInput {
+        SoldierInput {
+            at_checkpoint: true,
+            papers,
+            compliant,
+            ..SoldierInput::default()
+        }
+    }
+
+    #[test]
+    fn refusal_reports_the_phase_it_entered() {
+        let mut brain = SoldierBrain::new(1, Vec3::ZERO, vec![Vec3::ZERO]);
+        let out = brain.tick(checkpoint(PapersState::Invalid, false));
+        assert_eq!(brain.checkpoint_phase, CheckpointPhase::Detention);
+        assert_eq!(out.state, SoldierState::Checkpoint);
+        assert_eq!(out.posture, PostureSignal::Detaining);
+    }
+
+    #[test]
+    fn valid_papers_release_immediately() {
+        let mut brain = SoldierBrain::new(1, Vec3::ZERO, vec![Vec3::new(1.0, 0.0, 0.0)]);
+        let out = brain.tick(checkpoint(PapersState::Valid, true));
+        assert_eq!(out.state, SoldierState::Patrol);
+        assert_eq!(out.voice, Some(VoiceLine::StandDown));
+        assert_eq!(brain.state, SoldierState::Patrol);
+    }
+
+    #[test]
+    fn force_calls_contact_once() {
+        let mut brain = SoldierBrain::new(7, Vec3::ZERO, vec![]);
+        let mut calls = 0u32;
+        let mut saw_force = false;
+        for _ in 0..30 {
+            let out = brain.tick(checkpoint(PapersState::Absent, false));
+            if brain.checkpoint_phase == CheckpointPhase::Force {
+                saw_force = true;
+            }
+            if saw_force && out.voice == Some(VoiceLine::ContactCall) {
+                calls += 1;
+            }
+        }
+        assert!(saw_force);
+        assert_eq!(calls, 1, "Force must not shout ContactCall every tick");
     }
 }
