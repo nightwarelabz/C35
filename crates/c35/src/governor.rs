@@ -22,8 +22,11 @@
 //! target, the ledger says so; the operator's word stands.
 
 /// The ladder: each level is a complete quality state. Level 0 is the
-/// full M2 picture; level 9 is the floor. The decomposition is staged —
+/// full picture; level 10 is the floor. The decomposition is staged —
 /// scale exhausts its steps before shadows are touched, and so on.
+/// Graphics push (2026-10-30): the shadow stage grew a fourth step
+/// (4096 at level 0) — the G1 holds 60 fps with headroom, so the top
+/// of the ladder spends it on shadow texels first.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct QualityState {
     /// Internal render scale (temporal reconstruction lifts it back to
@@ -37,23 +40,23 @@ pub struct QualityState {
     pub water_octaves: u32,
 }
 
-pub const MAX_LEVEL: usize = 9;
+pub const MAX_LEVEL: usize = 10;
 
 const SCALE_STEPS: [f32; 4] = [1.00, 0.85, 0.70, 0.55];
-const SHADOW_STEPS: [u32; 3] = [2048, 1024, 0];
+const SHADOW_STEPS: [u32; 4] = [4096, 2048, 1024, 0];
 const DETAIL_STEPS: [f32; 3] = [1.00, 0.70, 0.45];
 const WATER_STEPS: [u32; 3] = [4, 3, 2];
 
 /// The quality state at a ladder level.
 pub fn quality_at(level: usize) -> QualityState {
     let level = level.min(MAX_LEVEL);
-    // Staged decomposition: level 0..=3 spends scale, 3..=5 shadows,
-    // 5..=7 detail reach, 7..=9 water octaves (each stage starts when
+    // Staged decomposition: level 0..=3 spends scale, 3..=6 shadows,
+    // 6..=8 detail reach, 8..=10 water octaves (each stage starts when
     // the previous one is exhausted).
     let scale_idx = level.min(3);
-    let shadow_idx = level.saturating_sub(3).min(2);
-    let detail_idx = level.saturating_sub(5).min(2);
-    let water_idx = level.saturating_sub(7).min(2);
+    let shadow_idx = level.saturating_sub(3).min(3);
+    let detail_idx = level.saturating_sub(6).min(2);
+    let water_idx = level.saturating_sub(8).min(2);
     QualityState {
         render_scale: SCALE_STEPS[scale_idx],
         shadow_size: SHADOW_STEPS[shadow_idx],

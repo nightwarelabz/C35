@@ -2,9 +2,14 @@
 // backend, which cannot carry the TAA history resolve). A compact
 // console-grade FXAA: luma edge detection, sub-pixel shift along the
 // edge. Used only where TAA cannot run, and the ledger names it.
+//
+// Graphics push: bindings 2–3 carry the lamp bloom, added after
+// the FXAA filter so halos stay soft light and edges stay filtered.
 
 @group(0) @binding(0) var scene_tex: texture_2d<f32>;
 @group(0) @binding(1) var scene_sampler: sampler;
+@group(0) @binding(2) var bloom_tex: texture_2d<f32>;
+@group(0) @binding(3) var bloom_samp: sampler;
 
 struct BlitOut {
     @builtin(position) clip: vec4<f32>,
@@ -49,9 +54,14 @@ fn fs_main(in: BlitOut) -> @location(0) vec4<f32> {
     // untouched, so they shimmered under the 2.2x upscale. Catch
     // them (0.024 / 10%) — but clamp the shift tighter below, so
     // the smoothing never drags colour across a solid face.
+    // The branch below is if/else, not an early return, so the
+    // bloom add at the tail reaches every pixel — flat bright
+    // areas (a lit window's face, lamp glass) bloom exactly like
+    // filtered edges do.
+    var out_col: vec3<f32>;
     if (lmax - lmin < max(0.024, lmax * 0.10)) {
-        return vec4<f32>(m, 1.0); // no edge worth touching
-    }
+        out_col = m; // no edge worth touching
+    } else {
 
     // Edge direction from the luma cross.
     var dir = vec2<f32>(
@@ -71,9 +81,13 @@ fn fs_main(in: BlitOut) -> @location(0) vec4<f32> {
         + textureSample(scene_tex, scene_sampler, uv + dir * 0.5).rgb
     );
     let lb = luma(b);
-    var out_col = b;
+    out_col = b;
     if (lb < lmin || lb > lmax) {
         out_col = a; // the wider tap left the local range — fall back
     }
-    return vec4<f32>(out_col, 1.0);
+    }
+    // Lamp bloom, added after the filter: halos stay soft light,
+    // edges stay FXAA'd.
+    let halo = textureSample(bloom_tex, bloom_samp, uv).rgb;
+    return vec4<f32>(out_col + halo * 0.55, 1.0);
 }

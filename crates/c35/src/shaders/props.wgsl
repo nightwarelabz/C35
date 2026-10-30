@@ -33,9 +33,10 @@ struct PropOut {
 // SAME list the host light field evaluates for the bake and the
 // read. Wet surfaces mirror these lamps per-fragment, so a pool
 // sits where the field says the light is, and streaks toward the
-// camera the way water does.
+// camera the way water does. Graphics push: the set grew 12 → 24
+// so a rebuilt street can carry a lamp per bay.
 struct LampSet {
-    lamps: array<vec4<f32>, 12>,
+    lamps: array<vec4<f32>, 24>,
 }
 @group(2) @binding(0) var<uniform> lamp_set: LampSet;
 
@@ -107,7 +108,18 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             let ndv = clamp(dot(n2, v), 0.0, 1.0);
             let fres = 0.25 + 0.75 * pow(1.0 - ndv, 2.0);
             let breakup = 0.3 + 0.7 * clamp(tex.r * 2.2, 0.0, 1.0);
-            for (var i = 0; i < 12; i++) {
+            // Graphics push: the atlas alpha channel carries
+            // per-texel ROUGHNESS (painted by the city painters,
+            // 0 = glass-smooth, 1 = rough stone). Smooth ground
+            // reflects a tight, hot lobe; rough ground a broad,
+            // dim one — so the same lamp reads differently on wet
+            // asphalt than on worn concrete, with no new texture.
+            // Unpainted regions keep alpha 255 (fully rough), the
+            // safe default.
+            let rough = tex.a;
+            let spec_pow = mix(46.0, 13.0, rough);
+            let spec_gain = mix(5.0, 2.6, rough);
+            for (var i = 0; i < 24; i++) {
                 let lp = lamp_set.lamps[i];
                 if (lp.w > 0.0) {
                     let lv = lp.xyz - in.world_pos;
@@ -116,7 +128,7 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
                     if (reach > 0.0) {
                         let hv = normalize(lv / max(d, 0.001) + v);
                         let ndh = max(dot(n2, hv), 0.0);
-                        let spec = pow(ndh, 26.0) * 4.2;
+                        let spec = pow(ndh, spec_pow) * spec_gain;
                         col += SODIUM * spec * pow(reach, 1.5) * lp.w * fres * breakup;
                     }
                 }
@@ -124,9 +136,11 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             // The moon sheen is a GLISTEN BAND, not a wash: tight
             // power, so it lives only where the floor mirrors the
             // moon toward the camera and moves when the camera does.
+            // Roughness loosens it the same way it loosens the lamps.
             let hm = normalize(u.moon_dir.xyz + v);
-            let sheen = pow(max(dot(n2, hm), 0.0), 110.0);
-            col += u.moon_color.rgb * sheen * 0.35 * breakup;
+            let sheen_pow = mix(160.0, 70.0, rough);
+            let sheen = pow(max(dot(n2, hm), 0.0), sheen_pow);
+            col += u.moon_color.rgb * sheen * mix(0.5, 0.2, rough) * breakup;
         }
     }
     col = apply_fog(col, in.world_pos);

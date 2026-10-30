@@ -781,6 +781,10 @@ fn parts() -> Vec<Part> {
     v.push(part("coat vent shadow", Pelvis, (0.0, 0.68, -0.1465), (0.05, 0.17, 0.014), PLASTIC, std));
     v.push(part("coat skirt side L", Pelvis, (0.2025, 0.755, 0.0), (0.065, 0.30, 0.245), WAXED, std));
     v.push(part("coat skirt side R", Pelvis, (-0.2025, 0.755, 0.0), (0.065, 0.30, 0.245), WAXED, std));
+    // Graphics push: a hem band wrapping the skirt's bottom edge,
+    // 5 mm proud of every panel — the coat's weight line, so the
+    // skirt ends in a mass instead of a cut edge.
+    v.push(part("coat hem band", Pelvis, (0.0, 0.615, 0.0), (0.48, 0.05, 0.32), WAXED, std));
     v.push(part("coat front quarter L", ThighL, (0.112, 0.815, 0.122), (0.205, 0.31, 0.06), WAXED, std));
     v.push(part("coat front quarter R", ThighR, (-0.112, 0.815, 0.122), (0.205, 0.31, 0.06), WAXED, std));
     // ---- torso: the coat itself ----
@@ -798,6 +802,10 @@ fn parts() -> Vec<Part> {
         v.push(part(match i { 0 => "coat button 1", 1 => "coat button 2", _ => "coat button 3" },
             Torso, (-0.095, *y, 0.153), (0.028, 0.028, 0.020), PLASTIC, std));
     }
+    // Graphics push: the storm flap over the button placket — a
+    // waxed coat's covered front. It sits on the button side
+    // only, so the shirt V stays open beside it.
+    v.push(part("coat storm flap", Torso, (-0.095, 1.31, 0.168), (0.08, 0.40, 0.024), WAXED, std));
     v.push(part("collar", Torso, (0.0, 1.525, -0.015), (0.27, 0.09, 0.25), WAXED, std));
     v.push(part("shoulder L", Torso, (0.29, 1.478, 0.0), (0.20, 0.095, 0.28), WAXED, std));
     v.push(part("shoulder R", Torso, (-0.29, 1.478, 0.0), (0.20, 0.095, 0.28), WAXED, std));
@@ -1688,6 +1696,42 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
                 v.push(vm_part("vm watch case (face-inward)", (0.065, dy, 0.28), (0.026, 0.05, 0.05), METAL));
             }
         }
+    }
+    // VISIBILITY TUNING (graphics push, 2026-10-30): the renderer
+    // clips at near plane 0.5, and the pre-tune parts sat inside
+    // it — LowReady cuffs 0.41–0.47 and grip 0.44–0.50 fully
+    // clipped, gloves half clipped, so play showed a floating gun
+    // with partial gloves and no sleeves. Worse, LowReady hands
+    // sat ~37° below level gaze — below the 50° FOV frame (±25°)
+    // at level pitch. The fix is pose-side, not a near-plane
+    // change: pushing the whole assembly forward clears the near
+    // plane for every visible mass, and lifting LowReady brings
+    // the hands to ~18° below gaze (in-frame with margin). A
+    // scene-wide near-plane cut was rejected: it cannot fix
+    // framing at all, and it spends depth precision across the
+    // whole scene for a viewmodel-only problem. Costs nothing:
+    // same parts, same tris, same draws — moved constants.
+    // Post-tune minima (z) and hand angles: LowReady cuffs 0.59,
+    // gloves 0.55, grip 0.62, hands 17.6° below; Aim cuffs 0.55,
+    // gloves 0.61, grip 0.68, hands 16.2° below; LauncherRaise
+    // gloves 0.60, drum 0.56, hands 16.4° below; LauncherSwing
+    // gloves 0.60, drum 0.56. Accepted residuals: the
+    // LauncherRaise stock butt keeps a 2 cm clip sliver (it tucks
+    // at the shoulder by design); the Aim watch strap keeps a
+    // 2.5 cm clip sliver; the LauncherSwing hands stay low by
+    // design (a hang tuck — they render, unclipped, whenever the
+    // camera pitches down to them); the launcher watch stays
+    // clipped in launcher poses (a 26 mm wrist detail on a
+    // near-body wrist — the drum and hands are the read there).
+    let (push, lift) = match pose {
+        ViewmodelPose::LowReady => (0.18f32, 0.14f32),
+        ViewmodelPose::Aim => (0.14, 0.06),
+        ViewmodelPose::LauncherRaise => (0.18, 0.10),
+        ViewmodelPose::LauncherSwing => (0.28, 0.12),
+    };
+    for p in v.iter_mut() {
+        p.center.z += push;
+        p.center.y += lift;
     }
     v
 }

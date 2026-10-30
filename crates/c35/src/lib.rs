@@ -84,11 +84,13 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Single-cascade sun shadow map edge at governor level 0 (the PCF texel
 /// size itself travels in the `quality` uniform — see shaders/common.wgsl).
-/// 2048 over a ±380-unit ortho box ≈ 0.37 units/texel — fine enough to
-/// carve the headwall's shadow, cheap enough to stay one cascade. The
-/// governor's ladder resizes it (2048 → 1024 → off); the ledger prints
+/// Graphics push (2026-10-30): 4096 over a ±380-unit ortho box ≈ 0.19
+/// units/texel, up from 2048's 0.37 — shadow edges stop shimmering at
+/// street distance, and the depth-only caster pass is vertex-bound, so
+/// the 4× raster area costs far less than it looks. The governor's
+/// ladder resizes it (4096 → 2048 → 1024 → off); the ledger prints
 /// its cost like everything else.
-pub const SHADOW_MAP_SIZE: u32 = 2048;
+pub const SHADOW_MAP_SIZE: u32 = 4096;
 /// Half-extent of the shadow ortho box (bounding-sphere fit of the vista).
 const SHADOW_RADIUS: f32 = 380.0;
 
@@ -129,6 +131,16 @@ struct ResolveUniforms {
     /// resolve height). Gain 0 = the term contributes exactly 0.0
     /// and the resolve is bit-identical to M1–M6.
     vel: [f32; 4],
+}
+
+/// Lamp bloom's blur-axis uniform (graphics push): one buffer per
+/// axis, filled once at build — no per-frame uniform writes, so the
+/// two blur passes in one encoder can never see each other's axis.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct BloomParams {
+    dir: [f32; 2],
+    pad: [f32; 2],
 }
 
 /// Which anti-aliasing the renderer runs — decided from the adapter's
@@ -452,6 +464,23 @@ pub struct Renderer {
     blit_layout: wgpu::BindGroupLayout,
     resolve_layout: Option<wgpu::BindGroupLayout>,
     resolve_bind_group: Option<wgpu::BindGroup>,
+    /// Lamp bloom (graphics push): half-res threshold + separable
+    /// blur, run between the scene pass and the blit. Pipelines and
+    /// the two fixed axis-uniform buffers live from build(); the
+    /// ping-pong textures, views and bind groups are (re)created
+    /// by resize() alongside the scene targets.
+    bloom_threshold_pipeline: wgpu::RenderPipeline,
+    bloom_blur_pipeline: wgpu::RenderPipeline,
+    bloom_layout: wgpu::BindGroupLayout,
+    bloom_uniform_h_buf: wgpu::Buffer,
+    bloom_uniform_v_buf: wgpu::Buffer,
+    bloom_tex_a: Option<wgpu::Texture>,
+    bloom_view_a: Option<wgpu::TextureView>,
+    bloom_tex_b: Option<wgpu::Texture>,
+    bloom_view_b: Option<wgpu::TextureView>,
+    bloom_threshold_bg: Option<wgpu::BindGroup>,
+    bloom_blur_h_bg: Option<wgpu::BindGroup>,
+    bloom_blur_v_bg: Option<wgpu::BindGroup>,
     resolved_tex: Option<wgpu::Texture>,
     resolved_view: Option<wgpu::TextureView>,
     shadow_attach: Option<(wgpu::Texture, Arc<wgpu::TextureView>)>,
@@ -492,9 +521,13 @@ pub struct Renderer {
     props_tris: u64,
     props_bytes: u64,
     /// The wet pass's lamp set (Slice 1): a uniform buffer of up to
-    /// 12 lamp heads + intensities, bound at group 2 by the props
+    /// 24 lamp heads + intensities, bound at group 2 by the props
     /// pipelines only. Zeroed until a host sets it — unlit lamps
-    /// contribute nothing.
+    /// contribute nothing. Graphics push (2026-10-30): the cap rose
+    /// from 12 so a rebuilt street can carry a lamp per bay; the
+    /// host's list still fills only what it builds, and the shader
+    /// loop early-outs on zero intensity, so the unused entries
+    /// cost nothing on wet fragments.
     props_lamp_buf: wgpu::Buffer,
     props_lamp_bind_group: wgpu::BindGroup,
     /// Slice 1: a host standing somewhere the island is not (a city
@@ -775,6 +808,9 @@ impl Renderer {
             });
 
         // ---- blit bind group layout ----
+        // Bindings 2–3 are the lamp bloom (graphics push): the
+        // half-res halo texture and a linear sampler for it, so the
+        // halo stays soft light over the scene's crisp texel grid.
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("blit layout"),
             entries: &[
@@ -790,6 +826,22 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -1053,11 +1105,11 @@ impl Renderer {
         });
         let props_lamp_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("props lamp set"),
-            size: 12 * 16,
+            size: 24 * 16,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&props_lamp_buf, 0, bytemuck::cast_slice(&[[0.0f32; 4]; 12]));
+        queue.write_buffer(&props_lamp_buf, 0, bytemuck::cast_slice(&[[0.0f32; 4]; 24]));
         let props_lamp_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("props lamp layout"),
@@ -1545,6 +1597,123 @@ impl Renderer {
             cache: None,
         });
 
+        // ---- lamp bloom (graphics push) ----
+        // The bloom module is loaded RAW, not through shader_src:
+        // common.wgsl already claims group(0) bindings 0–2 for the
+        // scene uniforms, and the bloom pass needs those bindings
+        // for its own source texture, sampler and axis uniform.
+        // The blit shaders are raw for the same reason, so the
+        // bloom bindings 2–3 in the blit layout above are clean.
+        let bloom_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bloom"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bloom.wgsl").into()),
+        });
+        let bloom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bloom layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let bloom_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bloom pipeline layout"),
+                bind_group_layouts: &[&bloom_layout],
+                push_constant_ranges: &[],
+            });
+        // Linear storage for the halo: the threshold decodes the
+        // Srgb scene target on read, the blur works linear, and
+        // the blit adds linear to linear.
+        let bloom_color_target = [Some(wgpu::ColorTargetState {
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let bloom_threshold_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("bloom threshold pipeline"),
+                layout: Some(&bloom_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &bloom_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &bloom_module,
+                    entry_point: Some("fs_threshold"),
+                    compilation_options: Default::default(),
+                    targets: &bloom_color_target,
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+        let bloom_blur_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("bloom blur pipeline"),
+                layout: Some(&bloom_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &bloom_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &bloom_module,
+                    entry_point: Some("fs_blur"),
+                    compilation_options: Default::default(),
+                    targets: &bloom_color_target,
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+        let bloom_uniform_h_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bloom uniform horizontal"),
+            contents: bytemuck::cast_slice(&[BloomParams {
+                dir: [1.0, 0.0],
+                pad: [0.0, 0.0],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let bloom_uniform_v_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("bloom uniform vertical"),
+            contents: bytemuck::cast_slice(&[BloomParams {
+                dir: [0.0, 1.0],
+                pad: [0.0, 0.0],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
         // ---- terrain geometry: the island as 16 tiles, generated in
         // parallel through the job pool (seeded — the same island on
         // every host, vertex-for-vertex the M1/M2 island at the seams).
@@ -1788,6 +1957,18 @@ impl Renderer {
             resolve_bind_group: None,
             resolved_tex: None,
             resolved_view: None,
+            bloom_threshold_pipeline,
+            bloom_blur_pipeline,
+            bloom_layout,
+            bloom_uniform_h_buf,
+            bloom_uniform_v_buf,
+            bloom_tex_a: None,
+            bloom_view_a: None,
+            bloom_tex_b: None,
+            bloom_view_b: None,
+            bloom_threshold_bg: None,
+            bloom_blur_h_bg: None,
+            bloom_blur_v_bg: None,
             shadow_attach: None,
             blit_sampler,
             nearest_sampler,
@@ -1898,6 +2079,96 @@ impl Renderer {
         let color_view = color.create_view(&Default::default());
         let depth_view = depth.create_view(&Default::default());
 
+        // Lamp bloom targets (graphics push): half the internal
+        // frame, linear storage, ping-pong pair. The threshold
+        // writes A, the horizontal blur reads A and writes B, the
+        // vertical blur reads B and writes A — so the blit always
+        // samples A. At the PS1.5 854×480 internal frame this is
+        // 427×240 × 2 × 4 B ≈ 0.8 MB.
+        let bw = (sw / 2).max(1);
+        let bh = (sh / 2).max(1);
+        let bloom_size = wgpu::Extent3d {
+            width: bw,
+            height: bh,
+            depth_or_array_layers: 1,
+        };
+        let bloom_tex_a = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bloom a"),
+            size: bloom_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let bloom_tex_b = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bloom b"),
+            size: bloom_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let bloom_view_a = bloom_tex_a.create_view(&Default::default());
+        let bloom_view_b = bloom_tex_b.create_view(&Default::default());
+        let bloom_threshold_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bloom threshold bind group"),
+            layout: &self.bloom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.bloom_uniform_h_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let bloom_blur_h_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bloom blur horizontal bind group"),
+            layout: &self.bloom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bloom_view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.bloom_uniform_h_buf.as_entire_binding(),
+                },
+            ],
+        });
+        let bloom_blur_v_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bloom blur vertical bind group"),
+            layout: &self.bloom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bloom_view_b),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.bloom_uniform_v_buf.as_entire_binding(),
+                },
+            ],
+        });
+
         // Temporal reconstruction chain: the resolve writes at OUTPUT
         // resolution — the resolved texture and the history are output-
         // sized, so the resolve's per-output-pixel history blend is the
@@ -1968,11 +2239,19 @@ impl Renderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(present_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&bloom_view_a),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
             ],
         });
         // Internal colour+depth at 4 B/px each, plus the output-sized
-        // reconstruction pair where TAA runs.
-        let bytes = (sw * sh) as u64 * 8 + extra_bytes;
+        // reconstruction pair where TAA runs, plus the bloom pair.
+        let bytes = (sw * sh) as u64 * 8 + extra_bytes + (bw * bh) as u64 * 8;
         // Rebuild the resolve bind group against the fresh textures.
         if self.aa_mode == AaMode::Taa {
             let (hist, resolved) = history_tex.as_ref().unwrap();
@@ -2009,6 +2288,13 @@ impl Renderer {
             self.resolved_view = Some(resolved_view);
         }
         self.history_valid = false;
+        self.bloom_tex_a = Some(bloom_tex_a);
+        self.bloom_view_a = Some(bloom_view_a);
+        self.bloom_tex_b = Some(bloom_tex_b);
+        self.bloom_view_b = Some(bloom_view_b);
+        self.bloom_threshold_bg = Some(bloom_threshold_bg);
+        self.bloom_blur_h_bg = Some(bloom_blur_h_bg);
+        self.bloom_blur_v_bg = Some(bloom_blur_v_bg);
         self.targets = Some(Targets {
             width,
             height,
@@ -2306,13 +2592,13 @@ impl Renderer {
 
     /// Slice 1 (wet pass): hand the renderer the practical lamp set
     /// the props shader mirrors on wet surfaces — (head xyz,
-    /// intensity) per lamp, up to 12; the rest of the set stays
+    /// intensity) per lamp, up to 24; the rest of the set stays
     /// dark. The host passes the SAME list its light field
     /// evaluates, so the pools the frame shows and the exposures
     /// the light read reports are one list of lamps.
     pub fn set_lamp_set(&mut self, lamps: &[[f32; 4]]) {
-        let mut set = [[0.0f32; 4]; 12];
-        for (i, l) in lamps.iter().take(12).enumerate() {
+        let mut set = [[0.0f32; 4]; 24];
+        for (i, l) in lamps.iter().take(24).enumerate() {
             set[i] = *l;
         }
         self.queue
@@ -2853,6 +3139,73 @@ impl Renderer {
         }
         if let Some(t) = &self.scene_timer {
             t.arm(&mut encoder);
+        }
+
+        // ---- lamp bloom (graphics push): threshold the graded
+        // scene colour at half res, separable-blur it through the
+        // ping-pong pair, and leave the halo in A for the blit.
+        // Sources the scene target in both AA modes, so the halo
+        // never feeds the TAA history. Three draws, ~0.3 Mpx.
+        {
+            let bloom_a = self.bloom_view_a.as_ref().unwrap().clone();
+            let bloom_b = self.bloom_view_b.as_ref().unwrap().clone();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bloom threshold pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bloom_a,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, self.bloom_threshold_bg.as_ref().unwrap(), &[]);
+            pass.set_pipeline(&self.bloom_threshold_pipeline);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bloom blur horizontal pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bloom_b,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, self.bloom_blur_h_bg.as_ref().unwrap(), &[]);
+            pass.set_pipeline(&self.bloom_blur_pipeline);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bloom blur vertical pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &bloom_a,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, self.bloom_blur_v_bg.as_ref().unwrap(), &[]);
+            pass.set_pipeline(&self.bloom_blur_pipeline);
+            pass.draw(0..3, 0..1);
+            draw_calls += 3;
         }
 
         // ---- TAA resolve + history copy ----
