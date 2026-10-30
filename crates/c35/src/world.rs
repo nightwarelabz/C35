@@ -212,7 +212,8 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
         + 0.00148 * (3.0 * gamma).sin();
     // Equation of time (minutes).
     let eqtime = 229.18
-        * (0.000075 + 0.001868 * gamma.cos() - 0.032077 * gamma.sin()
+        * (0.000075 + 0.001868 * gamma.cos()
+            - 0.032077 * gamma.sin()
             - 0.014615 * (2.0 * gamma).cos()
             - 0.040849 * (2.0 * gamma).sin());
 
@@ -265,7 +266,8 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
     let cold = cold_wave.powf(1.35);
     let autumn = gauss_day(season_day, 292.0, 26.0); // peak ~Oct 19
     let spring = gauss_day(season_day, 106.0, 24.0); // peak ~Apr 16
-    let summer_wave = 0.5 + 0.5 * (2.0 * std::f32::consts::PI * (season_day - 201.0) / 365.25).cos();
+    let summer_wave =
+        0.5 + 0.5 * (2.0 * std::f32::consts::PI * (season_day - 201.0) / 365.25).cos();
     let summer = summer_wave.powf(1.2);
 
     // ---- light & palette derivation ----
@@ -419,4 +421,65 @@ pub fn iso_utc(unix_seconds: f64) -> String {
         (secs % 3600) / 60,
         secs % 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn civil_roundtrip_covers_the_epoch_and_a_leap_day() {
+        for (y, m, d) in [
+            (1970, 1, 1),
+            (1969, 12, 31),
+            (2000, 2, 29),
+            (1900, 3, 1),
+            (2026, 1, 15),
+        ] {
+            let z = days_from_civil(y, m, d);
+            assert_eq!(civil_from_days(z), (y, m, d), "{y}-{m}-{d}");
+        }
+    }
+
+    #[test]
+    fn iso_utc_matches_the_civil_date() {
+        let unix = days_from_civil(2026, 1, 15) as f64 * 86400.0 + 14.0 * 3600.0;
+        assert_eq!(iso_utc(unix), "2026-01-15T14:00:00Z");
+        assert_eq!(iso_utc(0.0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso_utc(-1.0), "1969-12-31T23:59:59Z");
+    }
+
+    #[test]
+    fn chicago_winter_morning_is_a_short_cold_day() {
+        let unix = days_from_civil(2026, 1, 15) as f64 * 86400.0 + 14.0 * 3600.0;
+        let w = world_state(unix, &Observer::new(41.88, -87.63));
+        assert!(w.latitude_known);
+        assert!(
+            (w.day_length_hours - 9.3).abs() < 0.2,
+            "day {}",
+            w.day_length_hours
+        );
+        assert!(
+            w.sun_elevation_deg > 0.0 && w.sun_elevation_deg < 15.0,
+            "el {}",
+            w.sun_elevation_deg
+        );
+        assert!(w.cold > 0.9, "cold {}", w.cold);
+        assert!(w.water_ice > 0.5, "ice {}", w.water_ice);
+    }
+
+    #[test]
+    fn january_south_of_the_equator_is_summer() {
+        let unix = days_from_civil(2026, 1, 15) as f64 * 86400.0 + 14.0 * 3600.0;
+        let w = world_state(unix, &Observer::new(-33.87, 151.21));
+        assert!(w.cold < 0.25, "cold {}", w.cold);
+        assert!(w.summer > w.cold);
+    }
+
+    #[test]
+    fn unknown_location_is_the_equator_and_says_so() {
+        let w = world_state(0.0, &Observer::unknown());
+        assert!(!w.latitude_known);
+        assert_eq!(w.latitude_deg, 0.0);
+    }
 }
