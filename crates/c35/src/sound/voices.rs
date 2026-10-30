@@ -12,8 +12,8 @@
 //! Playback never judges; it only makes audible.
 
 use crate::sound::synth::{
-    attack, decay_exp, release_gate, CompositeVoice, NoiseBurst, Ring, Rng, Saw, Sine,
-    Thump, VoiceGen,
+    attack, decay_exp, release_gate, CompositeVoice, DropOsc, Lowpass, NoiseBurst, Ring,
+    Rng, Saw, Sine, Thump, VoiceGen,
 };
 use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
 
@@ -458,6 +458,270 @@ impl VoiceGen for ReportMurmur {
 
 pub fn report_murmur_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
     Box::new(ReportMurmur::new(seed, sample_rate))
+}
+
+/// The visor motif: three notes on a stacked fifth —
+/// C5, G5, C6 — the fingerprint of the operator's visor
+/// system. Every visor voice below is built from these
+/// frequencies; the power-on is the anchor, the power-off
+/// plays them falling, the tag is the smallest unit.
+const VISOR_C5: f32 = 523.25;
+const VISOR_G5: f32 = 783.99;
+const VISOR_C6: f32 = 1046.50;
+
+/// One motif note, closed-form like the reference render:
+/// sine fundamental plus 2nd and 3rd harmonics under a fast
+/// attack and an exponential decay, gated so notes never
+/// bleed into each other.
+fn visor_note(
+    dt: f32,
+    freq: f32,
+    gate: f32,
+    tau: f32,
+    amps: (f32, f32, f32),
+) -> f32 {
+    if dt < 0.0 || dt >= gate {
+        return 0.0;
+    }
+    let e = attack(dt, 0.006) * decay_exp(dt, tau) * release_gate(dt, gate, 0.02);
+    let p = 2.0 * std::f32::consts::PI * freq * dt;
+    e * (amps.0 * p.sin() + amps.1 * (2.0 * p).sin() + amps.2 * (3.0 * p).sin())
+}
+
+/// The visor powering on: the approved signature sound of
+/// the whole visor system, rendered through the synth
+/// primitives. A relay thunk, a charge rise (exponential
+/// triangle sweep 180 -> 2350 Hz with a sub sine and a
+/// band of hiss), a held shimmer at the top, then the
+/// motif — C5, G5, C6 — visor online. A whisper of room
+/// noise runs under everything: the street never fully
+/// leaves. Host-spawned from visor state, never the event
+/// log — like the grapple voices, it is the operator's own
+/// equipment speaking, heard at the ear.
+pub struct VisorPowerOn {
+    thunk: DropOsc,
+    hiss: Lowpass,
+    rng: Rng,
+    sweep_phase: f32,
+    sub_phase: f32,
+    t: f32,
+    dur: f32,
+    sample_rate: f32,
+}
+
+impl VisorPowerOn {
+    pub fn new(seed: u64, sample_rate: f32) -> VisorPowerOn {
+        VisorPowerOn {
+            // The thunk's pitch fall is the DropOsc's
+            // exponential where the reference render falls
+            // linearly 130 -> 48 Hz; tau chosen so the fall
+            // lands in the same place by the gate's end.
+            thunk: DropOsc::new(130.0, 48.0, 0.05, sample_rate),
+            hiss: Lowpass::new(585.0, sample_rate),
+            rng: Rng::new(seed),
+            sweep_phase: 0.0,
+            sub_phase: 0.0,
+            t: 0.0,
+            dur: 1.65,
+            sample_rate,
+        }
+    }
+}
+
+impl VoiceGen for VisorPowerOn {
+    fn next(&mut self) -> Option<f32> {
+        if self.t >= self.dur {
+            return None;
+        }
+        let t = self.t;
+        let mut s = 0.0f32;
+        // 1. Relay thunk, 0.00-0.14.
+        if t < 0.14 {
+            let e = attack(t, 0.004) * decay_exp(t, 0.045);
+            s += self.thunk.next() * e * 0.55;
+        }
+        // 2 + 3. Charge rise 0.06-0.91, shimmer 0.91-1.05.
+        // One phase runs through both, so the shimmer is
+        // the rise parked, not a new oscillator.
+        if (0.06..1.05).contains(&t) {
+            let tt = t - 0.06;
+            let rise_ratio: f32 = 2350.0 / 180.0;
+            let freq = if tt < 0.85 {
+                180.0 * rise_ratio.powf(tt / 0.85)
+            } else {
+                2350.0
+            };
+            if tt < 0.85 {
+                let ramp = (tt / 0.8 + 0.2).min(1.0);
+                let tri =
+                    2.0 * (2.0 * self.sweep_phase.fract() - 1.0).abs() - 1.0;
+                s += tri * attack(tt, 0.05) * decay_exp(tt, 10.0) * ramp * 0.16;
+                s += (self.sub_phase * 2.0 * std::f32::consts::PI).sin()
+                    * ramp
+                    * 0.10;
+                let hiss_env = (tt * 3.0).min(1.0);
+                s += self.hiss.process(self.rng.next_bipolar()) * hiss_env * 0.05;
+            } else {
+                let st = tt - 0.85;
+                let trem =
+                    0.85 + 0.15 * (st * 2.0 * std::f32::consts::PI * 28.0).sin();
+                s += (self.sweep_phase * 2.0 * std::f32::consts::PI).sin()
+                    * trem
+                    * attack(st, 0.01)
+                    * decay_exp(st, 0.09)
+                    * 0.07;
+            }
+            self.sweep_phase =
+                (self.sweep_phase + freq / self.sample_rate) % 1.0;
+            self.sub_phase =
+                (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
+        }
+        // 4. The motif: C5 at 1.05, G5 at 1.19, C6 at 1.33.
+        s += visor_note(t - 1.05, VISOR_C5, 0.16, 0.055, (0.30, 0.12, 0.05));
+        s += visor_note(t - 1.19, VISOR_G5, 0.16, 0.055, (0.30, 0.12, 0.05));
+        s += visor_note(t - 1.33, VISOR_C6, 0.16, 0.055, (0.30, 0.12, 0.05));
+        // 5. Room breath under the whole span.
+        let breath = 0.4 + 0.6 * (t / 0.5).min(1.0);
+        s += self.rng.next_bipolar() * 0.012 * breath;
+        self.t += 1.0 / self.sample_rate;
+        Some(s * release_gate(t, self.dur, 0.03))
+    }
+}
+
+pub fn visor_power_on_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
+    Box::new(VisorPowerOn::new(seed, sample_rate))
+}
+
+/// The visor powering off: the power-on mirrored. The
+/// motif falls (C6, G5, C5 — shorter, softer), the charge
+/// sinks back down its own sweep, and a relay release
+/// click closes the switch. 0.9 seconds. Host-spawned
+/// from visor state, heard at the ear.
+pub struct VisorPowerOff {
+    hiss: Lowpass,
+    rng: Rng,
+    sweep_phase: f32,
+    sub_phase: f32,
+    click: DropOsc,
+    t: f32,
+    dur: f32,
+    sample_rate: f32,
+}
+
+impl VisorPowerOff {
+    pub fn new(seed: u64, sample_rate: f32) -> VisorPowerOff {
+        VisorPowerOff {
+            hiss: Lowpass::new(585.0, sample_rate),
+            rng: Rng::new(seed),
+            sweep_phase: 0.0,
+            sub_phase: 0.0,
+            click: DropOsc::new(260.0, 110.0, 0.012, sample_rate),
+            t: 0.0,
+            dur: 0.90,
+            sample_rate,
+        }
+    }
+}
+
+impl VoiceGen for VisorPowerOff {
+    fn next(&mut self) -> Option<f32> {
+        if self.t >= self.dur {
+            return None;
+        }
+        let t = self.t;
+        let mut s = 0.0f32;
+        // The motif falling: C6 at 0.00, G5 at 0.12, C5 at
+        // 0.24 — the power-on's notes at 0.6 amplitude,
+        // tighter gates, quicker decay.
+        s += visor_note(t, VISOR_C6, 0.13, 0.045, (0.18, 0.072, 0.03));
+        s += visor_note(t - 0.12, VISOR_G5, 0.13, 0.045, (0.18, 0.072, 0.03));
+        s += visor_note(t - 0.24, VISOR_C5, 0.13, 0.045, (0.18, 0.072, 0.03));
+        // The charge sinking, 0.30-0.75: the rise's sweep
+        // run backwards, fading as it falls.
+        if (0.30..0.75).contains(&t) {
+            let tt = t - 0.30;
+            let k = tt / 0.45;
+            let sink_ratio: f32 = 180.0 / 2350.0;
+            let freq = 2350.0 * sink_ratio.powf(k);
+            let fade = (1.0 - k) * decay_exp(tt, 0.30);
+            let tri = 2.0 * (2.0 * self.sweep_phase.fract() - 1.0).abs() - 1.0;
+            s += tri * attack(tt, 0.01) * fade * 0.12;
+            s += (self.sub_phase * 2.0 * std::f32::consts::PI).sin()
+                * attack(tt, 0.01)
+                * fade
+                * 0.07;
+            let hiss_env = (tt * 10.0).min(1.0) * (1.0 - k);
+            s += self.hiss.process(self.rng.next_bipolar()) * hiss_env * 0.04;
+            self.sweep_phase =
+                (self.sweep_phase + freq / self.sample_rate) % 1.0;
+            self.sub_phase =
+                (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
+        }
+        // Relay release click at 0.78.
+        let dt = t - 0.78;
+        if (0.0..0.08).contains(&dt) {
+            s += self.click.next() * decay_exp(dt, 0.010) * 0.35;
+            if dt < 0.03 {
+                s += self.rng.next_bipolar() * decay_exp(dt, 0.004) * 0.15;
+            }
+        }
+        // The room breath leaving with the power.
+        s += self.rng.next_bipolar() * 0.010 * (1.0 - t / self.dur);
+        self.t += 1.0 / self.sample_rate;
+        Some(s * release_gate(t, self.dur, 0.02))
+    }
+}
+
+pub fn visor_power_off_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
+    Box::new(VisorPowerOff::new(seed, sample_rate))
+}
+
+/// A visor tag: the smallest unit of the motif language —
+/// one note pair, G5 -> C6, a 0.18 s blip the operator
+/// hears when the visor tags a sound. Quiet and dry: no
+/// thunk, no rise, no room. It is a punctuation mark, not
+/// a sentence. Host-spawned from visor state.
+pub struct VisorTag {
+    t: f32,
+    dur: f32,
+    sample_rate: f32,
+}
+
+impl VisorTag {
+    pub fn new(sample_rate: f32) -> VisorTag {
+        VisorTag {
+            t: 0.0,
+            dur: 0.18,
+            sample_rate,
+        }
+    }
+}
+
+impl VoiceGen for VisorTag {
+    fn next(&mut self) -> Option<f32> {
+        if self.t >= self.dur {
+            return None;
+        }
+        let t = self.t;
+        let mut s = 0.0f32;
+        for (t0, freq) in [(0.0, VISOR_G5), (0.09, VISOR_C6)] {
+            let dt = t - t0;
+            if (0.0..0.09).contains(&dt) {
+                let e = attack(dt, 0.004)
+                    * decay_exp(dt, 0.030)
+                    * release_gate(dt, 0.09, 0.01);
+                let p = 2.0 * std::f32::consts::PI * freq * dt;
+                s += e * (0.16 * p.sin() + 0.05 * (2.0 * p).sin());
+            }
+        }
+        self.t += 1.0 / self.sample_rate;
+        Some(s)
+    }
+}
+
+pub fn visor_tag_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
+    let _ = seed;
+    Box::new(VisorTag::new(sample_rate))
 }
 
 /// Mecha ground tremor: felt more than heard — a low
