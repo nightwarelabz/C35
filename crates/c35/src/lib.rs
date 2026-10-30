@@ -50,6 +50,7 @@ pub mod governor;
 pub mod locomotion;
 pub mod noise;
 pub mod operator;
+pub mod props;
 pub mod scene;
 pub mod vista;
 pub mod world;
@@ -473,6 +474,32 @@ pub struct Renderer {
     operator_bufs: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
     operator_tris: u64,
     operator_bytes: u64,
+    /// Slice 1 props apparatus (DeBrief): static built-world
+    /// geometry over the generated city atlas. Pipelines + the
+    /// atlas bind group are built once; a host places a mesh with
+    /// `set_props`. Absent (None) the apparatus costs no draws and
+    /// no existing path changes.
+    props_pipeline: wgpu::RenderPipeline,
+    props_depth_pipeline: wgpu::RenderPipeline,
+    props_bind_group: wgpu::BindGroup,
+    /// Kept so the city atlas texture outlives build().
+    #[allow(dead_code)]
+    props_atlas_tex: wgpu::Texture,
+    props_bufs: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    props_tris: u64,
+    props_bytes: u64,
+    /// The wet pass's lamp set (Slice 1): a uniform buffer of up to
+    /// 12 lamp heads + intensities, bound at group 2 by the props
+    /// pipelines only. Zeroed until a host sets it — unlit lamps
+    /// contribute nothing.
+    props_lamp_buf: wgpu::Buffer,
+    props_lamp_bind_group: wgpu::BindGroup,
+    /// Slice 1: a host standing somewhere the island is not (a city
+    /// street) suppresses the vista's terrain + water draws and
+    /// their triangle accounting. The sky, the shadow discipline,
+    /// the resolve and every other path are untouched; with the
+    /// flag off (every vista run) frames build exactly as before.
+    vista_suppressed: bool,
     /// M4: all tiles live in ONE vertex buffer and ONE index buffer
     /// (every LOD of every tile), so an indirect draw can address any
     /// tile/LOD by first_index alone (indices are absolute) — the
@@ -944,6 +971,119 @@ impl Renderer {
                 },
             ],
         });
+        // Slice 1: the city atlas (props) — same one-texture
+        // discipline as the operator atlas, its own generated image.
+        let city_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("city atlas"),
+            size: wgpu::Extent3d {
+                width: props::CITY_ATLAS_SIZE,
+                height: props::CITY_ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &city_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &props::generate_city_atlas(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(props::CITY_ATLAS_SIZE * 4),
+                rows_per_image: Some(props::CITY_ATLAS_SIZE),
+            },
+            wgpu::Extent3d {
+                width: props::CITY_ATLAS_SIZE,
+                height: props::CITY_ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        let city_view = city_tex.create_view(&Default::default());
+        let city_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("city atlas sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let city_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("city atlas layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let props_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("props bind group"),
+            layout: &city_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&city_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&city_sampler),
+                },
+            ],
+        });
+        let props_lamp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("props lamp set"),
+            size: 12 * 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&props_lamp_buf, 0, bytemuck::cast_slice(&[[0.0f32; 4]; 12]));
+        let props_lamp_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("props lamp layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let props_lamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("props lamp bind group"),
+            layout: &props_lamp_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: props_lamp_buf.as_entire_binding(),
+            }],
+        });
+        let props_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("props pipeline layout"),
+                bind_group_layouts: &[&scene_layout, &city_layout, &props_lamp_layout],
+                push_constant_ranges: &[],
+            });
+
         let operator_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("operator pipeline layout"),
@@ -978,6 +1118,12 @@ impl Renderer {
             label: Some("operator"),
             source: wgpu::ShaderSource::Wgsl(
                 shader_src(include_str!("shaders/operator.wgsl")).into(),
+            ),
+        });
+        let props_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("props"),
+            source: wgpu::ShaderSource::Wgsl(
+                shader_src(include_str!("shaders/props.wgsl")).into(),
             ),
         });
         let blit_shader = if aa_mode == AaMode::Fxaa {
@@ -1217,6 +1363,102 @@ impl Renderer {
                 fragment: None,
                 primitive: wgpu::PrimitiveState {
                     cull_mode: Some(wgpu::Face::Front),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Slice 1 props pipelines: the colour pass (scene group +
+        // city atlas group, double-sided — wires and thin street
+        // geometry must read from both sides) and the shadow-caster
+        // variant on the uniform-only depth group.
+        let props_vb_layout = [wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<props::PropVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 12,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: 24,
+                    shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 32,
+                    shader_location: 3,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 36,
+                    shader_location: 4,
+                },
+            ],
+        }];
+        let props_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("props pipeline"),
+            layout: Some(&props_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &props_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &props_vb_layout,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &props_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &scene_color_target,
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let props_depth_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("props shadow depth pipeline"),
+                layout: Some(&depth_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &props_module,
+                    entry_point: Some("vs_depth"),
+                    compilation_options: Default::default(),
+                    buffers: &props_vb_layout,
+                },
+                fragment: None,
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -1558,6 +1800,16 @@ impl Renderer {
             operator_bufs: None,
             operator_tris: 0,
             operator_bytes: 0,
+            props_pipeline,
+            props_depth_pipeline,
+            props_bind_group,
+            props_atlas_tex: city_tex,
+            props_bufs: None,
+            props_tris: 0,
+            props_bytes: 0,
+            props_lamp_buf,
+            props_lamp_bind_group,
+            vista_suppressed: false,
             merged_vb,
             merged_ib,
             tile_params,
@@ -2010,6 +2262,67 @@ impl Renderer {
         self.operator_tris
     }
 
+    /// Slice 1: place static built-world geometry (or remove it
+    /// with `None`). The mesh uploads once and then draws with the
+    /// scene — after the operator, before the water — and casts
+    /// into the shadow map with the casters. With nothing placed,
+    /// no draw is issued and no existing path changes.
+    pub fn set_props(&mut self, mesh: Option<&props::PropMesh>) {
+        match mesh {
+            None => {
+                self.props_bufs = None;
+                self.props_tris = 0;
+                self.props_bytes = 0;
+            }
+            Some(m) => {
+                let vbytes: &[u8] = bytemuck::cast_slice(&m.vertices);
+                let ibytes: &[u8] = bytemuck::cast_slice(&m.indices);
+                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("props vertices"),
+                    contents: vbytes,
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("props indices"),
+                    contents: ibytes,
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                self.props_tris = (m.indices.len() / 3) as u64;
+                self.props_bytes = (m.vertices.len()
+                    * std::mem::size_of::<props::PropVertex>()
+                    + m.indices.len() * 4) as u64;
+                self.props_bufs = Some((vb, ib, m.indices.len() as u32));
+            }
+        }
+    }
+
+    /// Triangles the placed props contribute (0 when absent).
+    pub fn props_triangles(&self) -> u64 {
+        self.props_tris
+    }
+
+    /// Slice 1 (wet pass): hand the renderer the practical lamp set
+    /// the props shader mirrors on wet surfaces — (head xyz,
+    /// intensity) per lamp, up to 12; the rest of the set stays
+    /// dark. The host passes the SAME list its light field
+    /// evaluates, so the pools the frame shows and the exposures
+    /// the light read reports are one list of lamps.
+    pub fn set_lamp_set(&mut self, lamps: &[[f32; 4]]) {
+        let mut set = [[0.0f32; 4]; 12];
+        for (i, l) in lamps.iter().take(12).enumerate() {
+            set[i] = *l;
+        }
+        self.queue
+            .write_buffer(&self.props_lamp_buf, 0, bytemuck::cast_slice(&set));
+    }
+
+    /// Slice 1: suppress (or restore) the vista's terrain + water
+    /// draws — for hosts standing somewhere the island is not.
+    /// Default off; every vista proof runs with it off.
+    pub fn set_vista_suppressed(&mut self, suppressed: bool) {
+        self.vista_suppressed = suppressed;
+    }
+
     /// Drain collected GPU cull-pass durations (empty unless the GPU
     /// path ran with timestamp queries available).
     pub fn drain_cull_samples(&self) -> Vec<f64> {
@@ -2154,7 +2467,9 @@ impl Renderer {
             + t
             + self.shadow_bytes
             + self.operator_bytes
+            + self.props_bytes
             + (operator::ATLAS_SIZE as u64) * (operator::ATLAS_SIZE as u64) * 4
+            + (props::CITY_ATLAS_SIZE as u64) * (props::CITY_ATLAS_SIZE as u64) * 4
             + std::mem::size_of::<Uniforms>() as u64
             + std::mem::size_of::<ResolveUniforms>() as u64
     }
@@ -2403,22 +2718,33 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_bind_group(0, &self.depth_bind_group, &[]);
-            pass.set_pipeline(&self.depth_pipeline);
-            pass.set_vertex_buffer(0, self.merged_vb.slice(..));
-            pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
-            for d in self.vista.shadow_draws() {
-                let p = self.tile_params[d.tile][d.lod.slot()];
-                pass.draw_indexed(
-                    p.first_index..p.first_index + p.index_count,
-                    p.base_vertex,
-                    0..1,
-                );
-                shadow_draws += 1;
+            if !self.vista_suppressed {
+                pass.set_pipeline(&self.depth_pipeline);
+                pass.set_vertex_buffer(0, self.merged_vb.slice(..));
+                pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
+                for d in self.vista.shadow_draws() {
+                    let p = self.tile_params[d.tile][d.lod.slot()];
+                    pass.draw_indexed(
+                        p.first_index..p.first_index + p.index_count,
+                        p.base_vertex,
+                        0..1,
+                    );
+                    shadow_draws += 1;
+                }
             }
             // M6: the operator casts too — one more depth draw with
             // his own caster pipeline (same depth bind group).
             if let Some((vb, ib, count)) = &self.operator_bufs {
                 pass.set_pipeline(&self.operator_depth_pipeline);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..*count, 0, 0..1);
+                shadow_draws += 1;
+            }
+            // Slice 1: the props cast too (buildings into the sun
+            // map — the street's long shadows are the buildings').
+            if let Some((vb, ib, count)) = &self.props_bufs {
+                pass.set_pipeline(&self.props_depth_pipeline);
                 pass.set_vertex_buffer(0, vb.slice(..));
                 pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..*count, 0, 0..1);
@@ -2459,7 +2785,7 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.merged_vb.slice(..));
             pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
             let mut terrain_draws = 0u32;
-            if self.cull_mode == CullMode::Gpu {
+            if !self.vista_suppressed && self.cull_mode == CullMode::Gpu {
                 // One indirect draw per tile slot; culled tiles carry a
                 // zero index count written by the cull pass.
                 let args = &self.gpu_cull.as_ref().expect("gpu cull apparatus").args_buf;
@@ -2467,7 +2793,7 @@ impl Renderer {
                     pass.draw_indexed_indirect(args, slot as u64 * DRAW_ARGS_BYTES);
                     terrain_draws += 1;
                 }
-            } else {
+            } else if !self.vista_suppressed {
                 for d in self.vista.draws() {
                     let p = self.tile_params[d.tile][d.lod.slot()];
                     pass.draw_indexed(
@@ -2490,9 +2816,25 @@ impl Renderer {
                 pass.draw_indexed(0..*count, 0, 0..1);
                 operator_draws = 1;
             }
-            pass.set_pipeline(&self.water_pipeline);
-            pass.draw(0..6, 0..1);
-            draw_calls += 1 + terrain_draws + operator_draws + 1;
+            // Slice 1: the props draw after the operator (both
+            // opaque; the street is the ground the men stand on).
+            let mut props_draws = 0u32;
+            if let Some((vb, ib, count)) = &self.props_bufs {
+                pass.set_pipeline(&self.props_pipeline);
+                pass.set_bind_group(1, &self.props_bind_group, &[]);
+                pass.set_bind_group(2, &self.props_lamp_bind_group, &[]);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..*count, 0, 0..1);
+                props_draws = 1;
+            }
+            let mut water_draws = 0u32;
+            if !self.vista_suppressed {
+                pass.set_pipeline(&self.water_pipeline);
+                pass.draw(0..6, 0..1);
+                water_draws = 1;
+            }
+            draw_calls += 1 + terrain_draws + operator_draws + props_draws + water_draws;
         }
         if self.cull_mode == CullMode::Gpu {
             if let Some(gc) = &self.gpu_cull {
@@ -2610,9 +2952,19 @@ impl Renderer {
         // blit (1) + the operator when placed. On the GPU path the
         // terrain term is the readback snapshot (a frame behind while
         // the camera moves; exact at any held pose).
-        self.last_tris = self.cull_stats().tris_after + 2 + 1 + 1 + self.operator_tris;
-        self.last_shadow_tris = self.vista.cull.shadow_tris
-            + if shadow_light { self.operator_tris } else { 0 };
+        let vista_tris = if self.vista_suppressed {
+            0
+        } else {
+            self.cull_stats().tris_after + 2
+        };
+        self.last_tris = vista_tris + 1 + 1 + self.operator_tris + self.props_tris;
+        let vista_shadow_tris = if self.vista_suppressed {
+            0
+        } else {
+            self.vista.cull.shadow_tris
+        };
+        self.last_shadow_tris = vista_shadow_tris
+            + if shadow_light { self.operator_tris + self.props_tris } else { 0 };
     }
 }
 
