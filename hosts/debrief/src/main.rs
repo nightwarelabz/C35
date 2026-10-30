@@ -16,6 +16,9 @@
 //!                  patrol's facing
 //!   --mode survey  no renderer: block census, the grapple anchor
 //!                  survey, and the light field's route profiles
+//!   --mode windowed  the same block LIVE in a real window
+//!                  (see windowed.rs; --proof / --smoke <secs> run
+//!                  it unattended for the proof rig)
 //!
 //! Reality rig (same contract as the vista host — pins are read by
 //! this host only, never by the engine crate):
@@ -24,6 +27,7 @@
 mod block;
 mod light;
 mod soldier;
+mod windowed;
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -81,14 +85,14 @@ fn parse_pin_iso(s: &str) -> Option<(f64, f32)> {
     Some((local - offset_min as f64 * 60.0, offset_min))
 }
 
-struct Reality {
-    world: WorldState,
+pub(crate) struct Reality {
+    pub(crate) world: WorldState,
     clock_line: String,
     observer_line: String,
     solar_line: String,
 }
 
-fn resolve_reality() -> Reality {
+pub(crate) fn resolve_reality() -> Reality {
     let mut offset_env = env_f32("COMIGEN_UTC_OFFSET_MIN");
     let (unix, clock_line) = match std::env::var("COMIGEN_PIN_ISO") {
         Ok(pin) => match parse_pin_iso(&pin) {
@@ -128,7 +132,7 @@ fn system_now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-fn print_reality(r: &Reality) {
+pub(crate) fn print_reality(r: &Reality) {
     let w = &r.world;
     println!("--- reality reading ---");
     println!("clock source     : {}", r.clock_line);
@@ -147,7 +151,7 @@ fn print_reality(r: &Reality) {
 
 /// The follow rig — the vista host's contract, unchanged (DESIGN
 /// §8's open-ground law lives in these offsets).
-fn follow_pose(anchor: Vec3, yaw: f32) -> c35::scene::CameraPose {
+pub(crate) fn follow_pose(anchor: Vec3, yaw: f32) -> c35::scene::CameraPose {
     let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
     let right = Vec3::new(-fwd.z, 0.0, fwd.x);
     c35::scene::CameraPose {
@@ -157,13 +161,52 @@ fn follow_pose(anchor: Vec3, yaw: f32) -> c35::scene::CameraPose {
     }
 }
 
-fn flat_ground(_x: f32, _z: f32) -> f32 {
+pub(crate) fn flat_ground(_x: f32, _z: f32) -> f32 {
     0.0
+}
+
+/// The hero-street camera rig — the still's own composition,
+/// shared verbatim with the windowed host's F1 bookmark (one
+/// definition: if a still and the window disagree, the window is
+/// wrong).
+pub(crate) fn hero_pose() -> c35::scene::CameraPose {
+    c35::scene::CameraPose {
+        eye: Vec3::new(0.8, 1.6, 21.0),
+        target: Vec3::new(-1.2, 2.0, -24.0),
+        fov_y_deg: 50.0,
+    }
+}
+
+/// The patrol-echo camera rig (golden #11's echo) — the still's
+/// composition, shared with the windowed host's F2 bookmark.
+pub(crate) fn echo_pose() -> c35::scene::CameraPose {
+    c35::scene::CameraPose {
+        eye: Vec3::new(-5.2, 0.9, 29.5),
+        target: Vec3::new(3.2, 2.4, 4.0),
+        fov_y_deg: 50.0,
+    }
+}
+
+/// The two crossings' routes — start + scripted legs, shared
+/// verbatim with the windowed host's live drives (F3 / F4).
+pub(crate) fn drive_route(which: &str) -> (Vec2, Vec<ScriptLeg>) {
+    if which == "open" {
+        (
+            Vec2::new(-2.0, -44.0),
+            vec![
+                ScriptLeg::to(-2.0, -10.0, Gait::Walk),
+                ScriptLeg::to(-2.0, 30.0, Gait::Run),
+                ScriptLeg::to(-2.0, 44.0, Gait::Walk),
+            ],
+        )
+    } else {
+        (Vec2::new(8.9, -44.0), vec![ScriptLeg::to(8.9, 44.0, Gait::CrouchWalk)])
+    }
 }
 
 /// Merge the two men's meshes into the engine's one character
 /// slot: vertices concatenated, the second mesh's indices offset.
-fn merge_meshes(a: &OperatorMesh, b: &OperatorMesh) -> OperatorMesh {
+pub(crate) fn merge_meshes(a: &OperatorMesh, b: &OperatorMesh) -> OperatorMesh {
     let mut vertices = Vec::with_capacity(a.vertices.len() + b.vertices.len());
     vertices.extend_from_slice(&a.vertices);
     vertices.extend_from_slice(&b.vertices);
@@ -222,6 +265,30 @@ fn save_png(renderer: &c35::Renderer, tex: &c35::wgpu::Texture, width: u32, heig
     println!("saved {path}");
 }
 
+/// THE scene build — one definition for every host mode: the
+/// presentation, the pinned governor, the suppressed vista, the
+/// block placed as props, and the wet pass's lamp set mirrored
+/// from the light field's own list (so the pools in the frame and
+/// the exposures in the light read are one geography). The
+/// headless rig and the windowed host both configure through
+/// here; a mode that wants a different scene is a different mode,
+/// not a quiet edit.
+pub(crate) fn configure_scene(renderer: &mut c35::Renderer, blk: &block::Block, present: &str) {
+    if present == "ps15" {
+        renderer.set_present_mode(c35::PresentMode::Ps15, 2.0);
+    }
+    renderer.pin_governor(Some(0));
+    renderer.set_vista_suppressed(true);
+    renderer.set_props(Some(&blk.mesh));
+    let lamp_set: Vec<[f32; 4]> = blk
+        .field
+        .lamps
+        .iter()
+        .map(|l| [l.head.x, l.head.y, l.head.z, light::LAMP_INTENSITY])
+        .collect();
+    renderer.set_lamp_set(&lamp_set);
+}
+
 struct Rig {
     renderer: c35::Renderer,
     out_tex: c35::wgpu::Texture,
@@ -239,22 +306,7 @@ impl Rig {
             height,
             1.0,
         ));
-        if present == "ps15" {
-            renderer.set_present_mode(c35::PresentMode::Ps15, 2.0);
-        }
-        renderer.pin_governor(Some(0));
-        renderer.set_vista_suppressed(true);
-        renderer.set_props(Some(&blk.mesh));
-        // The wet pass mirrors THESE lamps — the field's own list,
-        // so the pools in the frame and the exposures in the light
-        // read are one geography.
-        let lamp_set: Vec<[f32; 4]> = blk
-            .field
-            .lamps
-            .iter()
-            .map(|l| [l.head.x, l.head.y, l.head.z, light::LAMP_INTENSITY])
-            .collect();
-        renderer.set_lamp_set(&lamp_set);
+        configure_scene(&mut renderer, blk, present);
         let out_tex = renderer.device.create_texture(&c35::wgpu::TextureDescriptor {
             label: Some("debrief output"),
             size: c35::wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -298,7 +350,7 @@ impl Rig {
     }
 }
 
-fn op_mesh(frame: &PoseFrame, spot: Vec3, yaw_deg: f32) -> OperatorMesh {
+pub(crate) fn op_mesh(frame: &PoseFrame, spot: Vec3, yaw_deg: f32) -> OperatorMesh {
     build_operator_frame(frame, spot, 0.0, yaw_deg)
 }
 
@@ -338,6 +390,20 @@ fn main() {
 
     let reality = resolve_reality();
     let world = reality.world;
+
+    if mode == "windowed" {
+        let params = windowed::Params {
+            out_dir: out_dir.clone(),
+            present: present.clone(),
+            width,
+            height,
+            proof: args.iter().any(|a| a == "--proof"),
+            smoke_secs: arg_value(&args, "--smoke").and_then(|v| v.parse().ok()),
+        };
+        windowed::run(blk, &reality, params);
+        return;
+    }
+
     let mut rig = Rig::new(width, height, &present, &blk);
 
     match mode.as_str() {
@@ -348,32 +414,14 @@ fn main() {
             let op = op_mesh(&PoseFrame::from_pose(c35::OperatorPose::StandReady), Vec3::new(-2.0, 0.0, 3.0), 168.0);
             let so = soldier::soldier_mesh(&soldier::pose_low_ready(), Vec3::new(-8.4, 0.0, -9.0), 0.0, 190.0);
             let both = merge_meshes(&op, &so);
-            rig.still(
-                &world,
-                c35::scene::CameraPose {
-                    eye: Vec3::new(0.8, 1.6, 21.0),
-                    target: Vec3::new(-1.2, 2.0, -24.0),
-                    fov_y_deg: 50.0,
-                },
-                Some(&both),
-                &format!("{out_dir}/hero-street.png"),
-            );
+            rig.still(&world, hero_pose(), Some(&both), &format!("{out_dir}/hero-street.png"));
             // ECHO of golden #11: low camera, the patrol posted under
             // the east lamp with the banner on the wall behind him,
             // the operator crouched in the dark corner, foreground.
             let op = op_mesh(&PoseFrame::from_pose(c35::OperatorPose::Crouch), Vec3::new(-7.4, 0.0, 21.0), 180.0);
             let so = soldier::soldier_mesh(&soldier::pose_low_ready(), Vec3::new(6.0, 0.0, 19.2), 0.0, 0.0);
             let both = merge_meshes(&op, &so);
-            rig.still(
-                &world,
-                c35::scene::CameraPose {
-                    eye: Vec3::new(-5.2, 0.9, 29.5),
-                    target: Vec3::new(3.2, 2.4, 4.0),
-                    fov_y_deg: 50.0,
-                },
-                Some(&both),
-                &format!("{out_dir}/echo-patrol.png"),
-            );
+            rig.still(&world, echo_pose(), Some(&both), &format!("{out_dir}/echo-patrol.png"));
             rig.ledger("stills");
         }
         "poses" => {
@@ -415,7 +463,7 @@ fn main() {
             rig.ledger("drives");
         }
         other => {
-            eprintln!("unknown --mode '{other}' (still|poses|drive|survey)");
+            eprintln!("unknown --mode '{other}' (still|poses|drive|survey|windowed)");
             std::process::exit(2);
         }
     }
@@ -426,7 +474,7 @@ fn main() {
 /// north end, back down the street's east lane, across the south —
 /// a rectangle that closes on its own start, so the loop restarts
 /// seamlessly.
-fn patrol_legs() -> Vec<ScriptLeg> {
+pub(crate) fn patrol_legs() -> Vec<ScriptLeg> {
     vec![
         ScriptLeg::to(-8.6, 40.0, Gait::Walk),
         ScriptLeg::to(2.5, 40.0, Gait::Walk),
@@ -436,18 +484,7 @@ fn patrol_legs() -> Vec<ScriptLeg> {
 }
 
 fn run_drive(rig: &mut Rig, world: &WorldState, blk: &block::Block, out_dir: &str, which: &str) {
-    let (start, legs) = if which == "open" {
-        (
-            Vec2::new(-2.0, -44.0),
-            vec![
-                ScriptLeg::to(-2.0, -10.0, Gait::Walk),
-                ScriptLeg::to(-2.0, 30.0, Gait::Run),
-                ScriptLeg::to(-2.0, 44.0, Gait::Walk),
-            ],
-        )
-    } else {
-        (Vec2::new(8.9, -44.0), vec![ScriptLeg::to(8.9, 44.0, Gait::CrouchWalk)])
-    };
+    let (start, legs) = drive_route(which);
     let mut ctrl = Controller::new(start, legs);
     let mut anim = Animator::new();
     anim.set_ground_fn(Some(flat_ground));
