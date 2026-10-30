@@ -3,19 +3,29 @@
 //! M6: the character pipeline. The operator is built **procedurally**
 //! — box-part geometry over a small skeleton, skinned rigidly per
 //! bone on the CPU, surfaced from a **generated** texture atlas (no
-//! image assets anywhere, as everywhere in this engine). He is the
-//! banner's man, modelled from the references the operator supplied:
-//! the bust portrait (`c35-stage/debrief-operator-reference.jpg`)
-//! governs the face and visor, the banner (`debrief-banner.jpg`) the
-//! pose and the night grade, and the full-body model sheet
-//! (`c35-stage/debrief-operator-model-sheet.jpg`) governs the
-//! proportions and everything below the chest — long legs, tall
-//! lace-up boots, capped knee pads, the drop-leg holster rig, the
-//! belt pouch row, the tall radio pack. Sealed hood with headset, a
-//! bare skin band, the red visor band, balaclava, carrier vest with
-//! pouches, the NSA patch on his right shoulder, a radio with a tall
-//! antenna, and the HK USP in his hand — chunky low-poly in the
-//! 1–3k triangle class the PS1.5 doctrine names for characters.
+//! image assets anywhere, as everywhere in this engine).
+//!
+//! Operator perfection, phase 1 (the STREET configuration): the
+//! figure is modelled from the reboot references the operator
+//! supplied — `c35-stage/debrief-operator-reboot-reference.jpg`
+//! (#31, front) and `c35-stage/debrief-operator-reboot-rear-reference.jpg`
+//! (#32, rear). **The rear is the primary angle** — it is the
+//! most-seen view in third person, and the build is judged
+//! rear-first. The kit map is exact: waxed-canvas coat worn pale at
+//! the strap lines; radio pack riding HIGH on the LEFT of the back
+//! with TWO antenna whips; plain back panel; THREE rear belt
+//! pouches with brass buckles; one re-sewn pack strap; the long gun
+//! slung under the pack; the USP in a worn leather holster on the
+//! right hip (and in his hand in the staged poses, as always); face
+//! weathered, nose once broken, grey at the temples; the watch worn
+//! FACE-INWARD on the left wrist. No insignia, no labels, nothing
+//! that emits light. The M6 build's assault modelling (sealed hood,
+//! red visor, carrier, NSA patch) is superseded for this figure —
+//! the assault configuration returns as its own build in phase 2.
+//! The skeleton, the pose interface, and the proportions' frame
+//! (long legs, tall lace-up boots) are unchanged from M6/M7 —
+//! chunky low-poly in the 1–3k triangle class the PS1.5 doctrine
+//! names for characters.
 //!
 //! Posing is rigid skinning: every part is bound to one bone, and a
 //! pose is a set of joint angles over the skeleton, evaluated once
@@ -39,7 +49,8 @@ use glam::{EulerRot, Mat4, Vec3};
 pub const ATLAS_SIZE: u32 = 256;
 
 /// Material ids (the `mat` vertex attribute; the shader branches on
-/// it). 0 = standard lit surface. 1 = the visor: emissive red.
+/// it). 0 = standard lit surface. 1 = emissive (the M6 visor's id;
+/// no part of the street figure uses it — nothing on the man emits).
 pub const MAT_STANDARD: f32 = 0.0;
 pub const MAT_VISOR: f32 = 1.0;
 
@@ -57,7 +68,7 @@ pub const OPERATOR_SPOT: (f32, f32) = (-8.0, 64.0);
 pub const OPERATOR_YAW_DEG: f32 = 38.0;
 
 /// Camera A: the banner's angle — front three-quarter from his right
-/// (the patch side), close, at his chest height, the island and the
+/// (the gun side), close, at his chest height, the island and the
 /// headwall behind him across the bay inlet. Heights assume the
 /// proof spot's terrain (0.7 at the spot — the probe prints it; the
 /// cameras were framed against it).
@@ -66,7 +77,7 @@ pub const OP_CAM_A: crate::scene::CameraPose = crate::scene::CameraPose {
     target: Vec3::new(-8.0, 2.05, 64.0),
     fov_y_deg: 50.0,
 };
-/// Camera B: his right side full-on — the patch side — profile with
+/// Camera B: his right side full-on — the gun side — profile with
 /// the USP silhouette and the shore running away behind him.
 pub const OP_CAM_B: crate::scene::CameraPose = crate::scene::CameraPose {
     eye: Vec3::new(-10.7, 2.1, 66.9),
@@ -88,15 +99,32 @@ pub struct OperatorVertex {
 // ---------------------------------------------------------------------
 
 /// Atlas regions as pixel rects (x, y, w, h) in the 256² atlas.
+///
+/// Ownership law, proven by the soldier's solo frames: the regions
+/// the Regime soldier samples (VEST, FABRIC, HELMET, METAL, LEATHER,
+/// PLASTIC, STRAP, COAT, ARMBAND, MASK, REDCLOTH) are FROZEN — their
+/// rects and their paint never change in an operator pass, or his
+/// pixels move. The street pass works only in operator-only regions
+/// (WAXED, SKIN, TROUSER, FACE, METAL_LIGHT) and in texels no figure
+/// had ever painted (WEBBING, POUCH, RADIO, HAIR).
 pub mod region {
-    pub const CAMO: (u32, u32, u32, u32) = (0, 0, 128, 128);
+    /// The street coat's waxed canvas (the M6 build's CAMO rect,
+    /// repainted — the soldier never sampled it).
+    pub const WAXED: (u32, u32, u32, u32) = (0, 0, 128, 128);
     pub const VEST: (u32, u32, u32, u32) = (128, 0, 64, 64);
     pub const FABRIC: (u32, u32, u32, u32) = (192, 0, 64, 48);
     pub const SKIN: (u32, u32, u32, u32) = (192, 48, 64, 32);
-    pub const VISOR: (u32, u32, u32, u32) = (128, 64, 128, 32);
+    /// Trousers / the dark knit under the coat (the M6 build's VISOR
+    /// rect, repainted — the soldier never sampled it).
+    pub const TROUSER: (u32, u32, u32, u32) = (128, 64, 128, 32);
     pub const HELMET: (u32, u32, u32, u32) = (0, 128, 64, 64);
-    pub const PATCH: (u32, u32, u32, u32) = (64, 128, 64, 64);
+    /// The face, painted like the M6 patch was — surface art meant
+    /// to read at proof distance (the M6 build's PATCH rect,
+    /// repainted; the patch itself is deleted — no labels on him).
+    pub const FACE: (u32, u32, u32, u32) = (64, 128, 64, 64);
     pub const METAL: (u32, u32, u32, u32) = (128, 128, 64, 32);
+    /// Brass — buckles and clasps (the M6 build's light-metal rect,
+    /// repainted warm; the soldier never sampled it).
     pub const METAL_LIGHT: (u32, u32, u32, u32) = (192, 128, 64, 32);
     pub const LEATHER: (u32, u32, u32, u32) = (128, 160, 64, 32);
     pub const PLASTIC: (u32, u32, u32, u32) = (192, 160, 64, 32);
@@ -110,6 +138,17 @@ pub mod region {
     pub const ARMBAND: (u32, u32, u32, u32) = (128, 96, 64, 32);
     pub const MASK: (u32, u32, u32, u32) = (160, 192, 48, 48);
     pub const REDCLOTH: (u32, u32, u32, u32) = (208, 192, 48, 32);
+    // Operator-perfection extension: the street figure's own
+    // materials, painted into texels that were zero in every prior
+    // build (the soldier's regions and pixels are untouched).
+    /// Olive webbing — straps, belt, flaps.
+    pub const WEBBING: (u32, u32, u32, u32) = (192, 96, 64, 32);
+    /// Olive canvas — the belt pouches.
+    pub const POUCH: (u32, u32, u32, u32) = (0, 224, 64, 32);
+    /// The radio's dark case — panel seams, a speaker grille.
+    pub const RADIO: (u32, u32, u32, u32) = (208, 224, 48, 32);
+    /// Hair — dark brown gone grey at the temples.
+    pub const HAIR: (u32, u32, u32, u32) = (160, 240, 48, 16);
 }
 
 pub fn uv_rect(r: (u32, u32, u32, u32)) -> [f32; 4] {
@@ -172,6 +211,20 @@ impl Atlas {
             }
         }
     }
+    /// Return a rect to the atlas's unpainted state (all zero) —
+    /// the border guards use it where a soldier region's filtered
+    /// samples used to meet empty texels.
+    fn clear_rect(&mut self, r: (u32, u32, u32, u32)) {
+        for y in r.1..(r.1 + r.3).min(ATLAS_SIZE) {
+            for x in r.0..(r.0 + r.2).min(ATLAS_SIZE) {
+                let i = ((y * ATLAS_SIZE + x) * 4) as usize;
+                self.px[i] = 0;
+                self.px[i + 1] = 0;
+                self.px[i + 2] = 0;
+                self.px[i + 3] = 0;
+            }
+        }
+    }
     /// Fill a region with a base colour, per-pixel noise, and optional
     /// blocky blotches from a palette (the digital-camo treatment).
     fn cloth(
@@ -210,55 +263,233 @@ impl Atlas {
     }
 }
 
-/// A 5×7 bitmap glyph, rows top to bottom, bit 4 = leftmost pixel.
-fn glyph(ch: char) -> [u8; 7] {
-    match ch {
-        'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
-        'S' => [0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110],
-        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-        _ => [0; 7],
+/// The face, drawn as low-res surface art in the deleted patch's
+/// rect — the same doctrine the patch was painted under: meant to
+/// read at proof distance, not to be a photograph. Weathered skin,
+/// a brow shadow, eyes, the once-broken nose carried in shading
+/// (the box nose gives it silhouette), a mouth line, stubble on the
+/// jaw, and the forehead scar from #31. Region-left is his RIGHT
+/// (the face quad's corner order puts the region's left edge on his
+/// right cheek), so the scar sits at region-left, where #31 wears
+/// it. Painted top = hairline, bottom = chin.
+fn paint_face(a: &mut Atlas) {
+    let r = region::FACE;
+    let (x0, y0) = (r.0, r.1);
+    a.cloth(
+        r,
+        [198, 152, 116],
+        5,
+        Some((&[[178, 130, 94], [214, 172, 134], [188, 140, 102]], 30, 5)),
+        0xCA35_0013,
+    );
+    let put = |a: &mut Atlas, x: u32, y: u32, w: u32, h: u32, c: [u8; 3]| {
+        a.rect((x0 + x, y0 + y, w, h), c);
+    };
+    // Brow ridge shadow, then the brows themselves.
+    put(a, 6, 13, 52, 4, [176, 132, 96]);
+    put(a, 10, 17, 15, 3, [74, 56, 40]);
+    put(a, 39, 17, 15, 3, [74, 56, 40]);
+    // Eyes: dark slots, with the tired shade under them.
+    put(a, 12, 22, 11, 4, [40, 30, 25]);
+    put(a, 41, 22, 11, 4, [40, 30, 25]);
+    put(a, 11, 27, 13, 2, [168, 124, 88]);
+    put(a, 40, 27, 13, 2, [168, 124, 88]);
+    // The nose in shading: bridge highlight, side shadows, the
+    // nostril shadow at its base.
+    put(a, 30, 28, 4, 10, [208, 164, 124]);
+    put(a, 28, 28, 2, 12, [172, 126, 90]);
+    put(a, 35, 28, 2, 12, [172, 126, 90]);
+    put(a, 27, 41, 11, 3, [146, 104, 72]);
+    // Weathered cheeks.
+    put(a, 8, 34, 8, 6, [170, 124, 88]);
+    put(a, 48, 34, 8, 6, [170, 124, 88]);
+    // Mouth: a line, and the lower lip's hint.
+    put(a, 24, 50, 17, 3, [104, 70, 54]);
+    put(a, 27, 54, 11, 2, [172, 122, 88]);
+    // The forehead scar (#31): a pale diagonal, region-left.
+    for i in 0..6u32 {
+        put(a, 11 + i, 4 + i, 3, 2, [230, 200, 172]);
     }
+    // Stubble: speckle over the jaw, denser at the chin band.
+    let mut rng = Rng::new(0xCA35_0014);
+    for y in 42..64u32 {
+        for x in 4..60u32 {
+            let density = if y >= 58 { 3 } else { 2 };
+            if rng.range(density + 2) < density {
+                a.set(x0 + x, y0 + y, [98, 76, 58]);
+            }
+        }
+    }
+    // The border frame: the deleted patch's tan edge, kept — the
+    // soldier's regions border this rect on three sides, and their
+    // filtered samples have met this tan since M6 (see
+    // paint_border_guards). On the face it reads as edge shading.
+    put(a, 0, 0, 64, 3, [168, 148, 100]);
+    put(a, 0, 61, 64, 3, [168, 148, 100]);
+    put(a, 0, 0, 3, 64, [168, 148, 100]);
+    put(a, 61, 0, 3, 64, [168, 148, 100]);
 }
 
-/// The NSA shoulder patch, drawn as low-res surface art: tan border,
-/// deep-blue field, a blocky eagle over a striped shield, "NSA" under
-/// it in a bitmap hand. It is meant to read as a patch at proof
-/// distance — a rectangle of allegiance, not a photograph.
-fn paint_patch(a: &mut Atlas) {
-    let r = region::PATCH;
-    let (x0, y0) = (r.0, r.1);
-    a.rect(r, [168, 148, 100]); // tan border
-    a.rect((x0 + 3, y0 + 3, 58, 58), [24, 38, 78]); // field
-    // Eagle: white head wedge, grey body and wing bars.
-    a.rect((x0 + 28, y0 + 7, 8, 6), [226, 228, 230]); // head
-    a.rect((x0 + 30, y0 + 12, 4, 10), [198, 200, 204]); // neck/body
-    a.rect((x0 + 12, y0 + 10, 18, 5), [150, 152, 158]); // left wing
-    a.rect((x0 + 34, y0 + 10, 18, 5), [150, 152, 158]); // right wing
-    a.rect((x0 + 14, y0 + 16, 14, 4), [128, 130, 138]); // wing shade
-    a.rect((x0 + 36, y0 + 16, 14, 4), [128, 130, 138]);
-    // Shield on the breast: blue chief, red/white stripes.
-    a.rect((x0 + 25, y0 + 20, 14, 5), [32, 52, 110]);
-    for i in 0..5 {
-        let c = if i % 2 == 0 { [178, 34, 40] } else { [228, 226, 220] };
-        a.rect((x0 + 25 + i * 3, y0 + 25, 2, 11), c);
-    }
-    a.rect((x0 + 25, y0 + 36, 14, 2), [168, 148, 100]); // shield base trim
-    // "NSA" in white, 5×7 glyphs at 2× scale, centred.
-    let word = ['N', 'S', 'A'];
-    let gw = 5 * 2 + 3;
-    let start_x = x0 + 32 - (gw * 3 - 3) / 2;
-    for (ci, ch) in word.iter().enumerate() {
-        let g = glyph(*ch);
-        for row in 0..7 {
-            for col in 0..5 {
-                if (g[row] >> (4 - col)) & 1 == 1 {
-                    let gx = start_x + (ci as u32) * gw + col as u32 * 2;
-                    let gy = y0 + 42 + row as u32 * 2;
-                    a.rect((gx, gy, 2, 2), [232, 232, 228]);
+/// The street figure's own materials (operator perfection, phase
+/// 1), painted into operator-only regions and previously-zero
+/// texels. The value ladder is the point — it is what survives the
+/// night grade and the PS1.5 palette: coat lightest of the cloths,
+/// pouches and webbing a green step down, trousers dark, the radio
+/// darkest, brass the one bright accent, skin above all.
+fn paint_street_regions(a: &mut Atlas) {
+    // WAXED: the coat's canvas — mottled browns, a pale wear band
+    // where the straps and belt rub (every coat face carries it at
+    // the same height, the way real wear repeats), grime at the hem.
+    let r = region::WAXED;
+    a.cloth(
+        r,
+        [104, 86, 57],
+        6,
+        Some((
+            &[[86, 68, 42], [120, 100, 66], [94, 76, 48], [132, 110, 74], [76, 60, 38]],
+            520,
+            7,
+        )),
+        0xCA35_0011,
+    );
+    {
+        let mut rng = Rng::new(0xCA35_0015);
+        // Pale wear band, broken like rubbed cloth.
+        for y in (r.1 + 34)..(r.1 + 40) {
+            for x in r.0..(r.0 + r.2) {
+                if rng.range(4) < 3 {
+                    a.set(x, y, [122, 104, 72]);
+                }
+            }
+        }
+        // Hem grime, two deepening bands.
+        for x in r.0..(r.0 + r.2) {
+            for y in (r.1 + 112)..(r.1 + 120) {
+                if rng.range(5) < 4 {
+                    a.set(x, y, [84, 66, 42]);
+                }
+            }
+            for y in (r.1 + 120)..(r.1 + 128) {
+                if rng.range(5) < 4 {
+                    a.set(x, y, [72, 56, 36]);
                 }
             }
         }
     }
+    // TROUSER: charcoal-brown cloth, quiet.
+    a.cloth(
+        region::TROUSER,
+        [45, 40, 36],
+        5,
+        Some((&[[37, 33, 29], [54, 48, 42], [41, 36, 31]], 260, 6)),
+        0xCA35_0012,
+    );
+    // WEBBING: olive drab with woven rows.
+    a.cloth(region::WEBBING, [76, 74, 50], 4, None, 0xCA35_0016);
+    {
+        let r = region::WEBBING;
+        for row in 0..8 {
+            let y = r.1 + row * 4;
+            a.rect((r.0, y, r.2, 2), [84, 82, 57]);
+        }
+    }
+    // POUCH: olive canvas, a step lighter than the webbing.
+    a.cloth(
+        region::POUCH,
+        [93, 89, 61],
+        5,
+        Some((&[[83, 79, 53], [104, 100, 70]], 60, 5)),
+        0xCA35_0017,
+    );
+    // RADIO: near-black case, a speaker grille's dot field, panel
+    // seams, one lighter dial plate.
+    {
+        let r = region::RADIO;
+        a.cloth(r, [30, 32, 30], 3, None, 0xCA35_0018);
+        for y in (r.1 + 5)..(r.1 + 19) {
+            for x in (r.0 + 5)..(r.0 + 25) {
+                if (x + y) % 3 == 0 {
+                    a.set(x, y, [17, 18, 17]);
+                }
+            }
+        }
+        a.rect((r.0 + 33, r.1 + 6, 11, 9), [52, 54, 50]);
+        a.rect((r.0, r.1 + 22, r.2, 2), [21, 22, 21]);
+        a.rect((r.0, r.1 + 27, r.2, 2), [21, 22, 21]);
+    }
+    // HAIR: dark brown, salt-and-pepper throughout and greyer at
+    // the region's edges — the temples, when the cap wraps.
+    {
+        let r = region::HAIR;
+        a.cloth(
+            r,
+            [54, 42, 32],
+            5,
+            Some((&[[44, 34, 25], [66, 52, 40]], 40, 4)),
+            0xCA35_0019,
+        );
+        let mut rng = Rng::new(0xCA35_001A);
+        for y in r.1..(r.1 + r.3) {
+            for x in r.0..(r.0 + r.2) {
+                let lx = x - r.0;
+                let temple = lx < 9 || lx >= r.2 - 9;
+                let p = if temple { 3 } else { 9 };
+                if rng.range(p) == 0 {
+                    a.set(x, y, [148, 144, 136]);
+                }
+            }
+        }
+    }
+    // BRASS (the METAL_LIGHT rect): warm metal, a bright top band —
+    // the buckle highlight.
+    a.cloth(region::METAL_LIGHT, [150, 118, 60], 6, None, 0xCA35_001B);
+    {
+        let r = region::METAL_LIGHT;
+        a.rect((r.0, r.1, r.2, 5), [172, 140, 76]);
+    }
+}
+
+/// Border guards, painted LAST in the atlas. The two figures share
+/// one texture, and filtered sampling blends across region borders
+/// — at glancing angles whole mip levels join in. The soldier's
+/// renders were proven byte-identical against neighbours that were
+/// dark cloth, a dark-red gradient edge, a tan patch frame, or
+/// outright zero; this pass restores those exact border conditions
+/// around the street figure's brighter paints, so his pixels cannot
+/// move. Each guard is a few texels of the street regions' own
+/// edges, where they read as seams, rims, and shadow lines.
+fn paint_border_guards(a: &mut Atlas) {
+    let dark: [u8; 3] = [38, 39, 40]; // the old camo's value
+    // WAXED's bottom and right edges met HELMET / VEST / ARMBAND
+    // when they were dark camo; keep the meeting dark.
+    let r = region::WAXED;
+    a.rect((r.0, r.1 + r.3 - 3, r.2, 3), dark);
+    a.rect((r.0 + r.2 - 3, r.1, 3, r.3), dark);
+    // TROUSER's top and bottom edges met VEST / ARMBAND when they
+    // were the visor gradient's dark edge.
+    let r = region::TROUSER;
+    a.rect((r.0, r.1, r.2, 3), [30, 8, 8]);
+    a.rect((r.0, r.1 + r.3 - 3, r.2, 3), [30, 8, 8]);
+    // BRASS's left and bottom edges met METAL / PLASTIC when the
+    // rect was mid-grey metal; keep a steel rim there.
+    let r = region::METAL_LIGHT;
+    a.rect((r.0, r.1, 3, r.3), [72, 77, 84]);
+    a.rect((r.0, r.1 + r.3 - 3, r.2, 3), [72, 77, 84]);
+    // The new regions border soldier regions across texels that
+    // were ZERO in every prior build (MASK above HAIR, REDCLOTH
+    // above RADIO, STRAP above POUCH, COAT beside POUCH and HAIR,
+    // ARMBAND beside WEBBING): return those meeting edges to zero.
+    let r = region::WEBBING;
+    a.clear_rect((r.0, r.1, 3, r.3));
+    let r = region::POUCH;
+    a.clear_rect((r.0, r.1, r.2, 3));
+    a.clear_rect((r.0 + r.2 - 3, r.1, 3, r.3));
+    let r = region::RADIO;
+    a.clear_rect((r.0, r.1, r.2, 3));
+    a.clear_rect((r.0, r.1, 3, r.3));
+    let r = region::HAIR;
+    a.clear_rect((r.0, r.1, r.2, 3));
+    a.clear_rect((r.0, r.1, 3, r.3));
 }
 
 /// The soldier's surfaces (Slice 1), painted into the atlas's
@@ -323,26 +554,6 @@ fn paint_soldier_regions(a: &mut Atlas) {
 /// every run (a proof in the operator probe compares a checksum).
 pub fn generate_atlas() -> Vec<u8> {
     let mut a = Atlas::new();
-    // The uniform: dark digital camo — near-black blocks with brown
-    // and grey flecks, the reference's night palette.
-    a.cloth(
-        region::CAMO,
-        [38, 39, 40],
-        5,
-        Some((
-            &[
-                [26, 27, 28],
-                [52, 49, 44],
-                [33, 31, 29],
-                [62, 56, 46],
-                [22, 23, 25],
-                [44, 44, 46],
-            ],
-            420,
-            6,
-        )),
-        0xCA35_0001,
-    );
     // Vest: near-black fabric with webbing rows.
     a.cloth(region::VEST, [20, 21, 23], 4, None, 0xCA35_0002);
     {
@@ -361,32 +572,6 @@ pub fn generate_atlas() -> Vec<u8> {
         Some((&[[178, 130, 94], [214, 172, 134], [188, 140, 102]], 26, 5)),
         0xCA35_0004,
     );
-    // Visor: dark red gradient, hot core left of centre (the glow
-    // point the banner shows), fine scanline shading.
-    {
-        let r = region::VISOR;
-        for y in 0..r.3 {
-            for x in 0..r.2 {
-                let v = 1.0 - ((y as f32 / r.3 as f32) - 0.5).abs() * 2.0; // 1 mid, 0 edges
-                let dx = (x as f32 - 44.0) / 26.0;
-                let dy = (y as f32 - 15.0) / 9.0;
-                let hot = (-(dx * dx + dy * dy)).exp();
-                let scan = if y % 3 == 2 { 0.82 } else { 1.0 };
-                let red = (26.0 + 96.0 * v + 150.0 * hot) * scan;
-                let grn = (4.0 + 14.0 * v + 26.0 * hot) * scan;
-                let blu = (5.0 + 10.0 * v + 16.0 * hot) * scan;
-                a.set(
-                    r.0 + x,
-                    r.1 + y,
-                    [
-                        red.clamp(0.0, 255.0) as u8,
-                        grn.clamp(0.0, 255.0) as u8,
-                        blu.clamp(0.0, 255.0) as u8,
-                    ],
-                );
-            }
-        }
-    }
     // Helmet/hood: matte charcoal with panel variation.
     a.cloth(
         region::HELMET,
@@ -395,13 +580,14 @@ pub fn generate_atlas() -> Vec<u8> {
         Some((&[[38, 41, 46], [24, 26, 30]], 22, 10)),
         0xCA35_0005,
     );
-    paint_patch(&mut a);
+    paint_face(&mut a);
     a.cloth(region::METAL, [44, 47, 51], 4, None, 0xCA35_0006);
-    a.cloth(region::METAL_LIGHT, [72, 77, 84], 4, None, 0xCA35_0007);
     a.cloth(region::LEATHER, [22, 19, 15], 5, None, 0xCA35_0008);
     a.cloth(region::PLASTIC, [12, 13, 15], 3, None, 0xCA35_0009);
     a.cloth(region::STRAP, [33, 34, 39], 4, None, 0xCA35_000A);
+    paint_street_regions(&mut a);
     paint_soldier_regions(&mut a);
+    paint_border_guards(&mut a);
     a.px
 }
 
@@ -518,150 +704,170 @@ fn parts() -> Vec<Part> {
     use Bone::*;
     let std = MAT_STANDARD;
     let mut v: Vec<Part> = Vec::new();
-    // ---- pelvis and torso ----
-    v.push(part("pelvis", Pelvis, (0.0, 0.96, 0.0), (0.36, 0.22, 0.24), CAMO, std));
-    v.push(part("belt", Pelvis, (0.0, 1.065, 0.0), (0.38, 0.07, 0.26), STRAP, std));
-    v.push(part("belt pouch L", Pelvis, (0.13, 1.02, -0.14), (0.10, 0.12, 0.05), VEST, std));
-    v.push(part("belt pouch R", Pelvis, (-0.13, 1.02, -0.14), (0.10, 0.12, 0.05), VEST, std));
-    v.push(part("canteen", Pelvis, (0.0, 1.00, -0.155), (0.11, 0.15, 0.06), VEST, std));
-    v.push(part("groin flap", Pelvis, (0.0, 0.84, 0.10), (0.17, 0.14, 0.04), VEST, std));
-    // The model sheet's waist: a full front row of flap pouches
-    // hanging from the belt below the vest's bottom edge.
-    v.push(part("waist pouch 1", Pelvis, (-0.140, 1.005, 0.130), (0.085, 0.125, 0.055), VEST, std));
-    v.push(part("waist pouch 2", Pelvis, (-0.047, 1.005, 0.138), (0.085, 0.125, 0.055), VEST, std));
-    v.push(part("waist pouch 3", Pelvis, (0.047, 1.005, 0.138), (0.085, 0.125, 0.055), VEST, std));
-    v.push(part("waist pouch 4", Pelvis, (0.140, 1.005, 0.130), (0.085, 0.125, 0.055), VEST, std));
-    v.push(part("vest torso", Torso, (0.0, 1.28, 0.0), (0.46, 0.44, 0.30), VEST, std));
-    v.push(part("chest plate", Torso, (0.0, 1.32, 0.145), (0.34, 0.30, 0.03), VEST, std));
-    v.push(part("back plate", Torso, (0.0, 1.32, -0.145), (0.34, 0.30, 0.03), VEST, std));
-    v.push(part("collar", Torso, (0.0, 1.515, 0.01), (0.24, 0.07, 0.22), FABRIC, std));
-    v.push(part("chest pouch 1", Torso, (-0.135, 1.24, 0.175), (0.11, 0.14, 0.05), VEST, std));
-    v.push(part("chest pouch 2", Torso, (0.0, 1.24, 0.175), (0.11, 0.14, 0.05), VEST, std));
-    v.push(part("chest pouch 3", Torso, (0.135, 1.24, 0.175), (0.11, 0.14, 0.05), VEST, std));
-    v.push(part("chest pouch 4", Torso, (-0.07, 1.385, 0.172), (0.12, 0.10, 0.045), VEST, std));
-    v.push(part("chest pouch 5", Torso, (0.07, 1.385, 0.172), (0.12, 0.10, 0.045), VEST, std));
-    v.push(part("abdomen pouch", Torso, (0.0, 1.095, 0.165), (0.17, 0.09, 0.05), VEST, std));
-    v.push(part("chest strap", Torso, (0.0, 1.415, 0.158), (0.40, 0.045, 0.028), STRAP, std));
-    v.push(part("side pouch L", Torso, (0.25, 1.18, 0.02), (0.05, 0.14, 0.17), VEST, std));
-    v.push(part("side pouch R", Torso, (-0.25, 1.18, 0.02), (0.05, 0.14, 0.17), VEST, std));
-    // The sheet's radio pack is tall — its top clears the shoulders
-    // and the mast climbs well past the head. Two whips: the tall
-    // mast and a shorter one beside it, both behind his left
-    // shoulder, as in both references.
-    v.push(part("radio pack", Torso, (0.0, 1.30, -0.205), (0.32, 0.44, 0.11), VEST, std));
-    v.push(part("radio pack pouch L", Torso, (0.11, 1.18, -0.225), (0.10, 0.16, 0.06), VEST, std));
-    v.push(part("radio pack pouch R", Torso, (-0.11, 1.18, -0.225), (0.10, 0.16, 0.06), VEST, std));
-    v.push(part("radio unit", Torso, (0.10, 1.44, -0.21), (0.13, 0.16, 0.13), PLASTIC, std));
-    v.push(part("antenna base", Torso, (0.14, 1.555, -0.22), (0.035, 0.05, 0.035), PLASTIC, std));
-    v.push(part("antenna lower", Torso, (0.14, 1.86, -0.22), (0.016, 0.56, 0.016), PLASTIC, std));
-    v.push(part("antenna upper", Torso, (0.145, 2.20, -0.225), (0.011, 0.14, 0.011), PLASTIC, std));
-    v.push(part("whip base", Torso, (0.05, 1.545, -0.22), (0.028, 0.04, 0.028), PLASTIC, std));
-    v.push(part("whip antenna", Torso, (0.05, 1.79, -0.22), (0.010, 0.44, 0.010), PLASTIC, std));
-    v.push(part("shoulder pad L", Torso, (0.285, 1.485, 0.0), (0.18, 0.09, 0.26), CAMO, std));
-    v.push(part("shoulder pad R", Torso, (-0.285, 1.485, 0.0), (0.18, 0.09, 0.26), CAMO, std));
-    v.push(part("shoulder strap L", Torso, (0.155, 1.53, 0.0), (0.085, 0.05, 0.34), STRAP, std));
-    v.push(part("shoulder strap R", Torso, (-0.155, 1.53, 0.0), (0.085, 0.05, 0.34), STRAP, std));
-    // ---- head ----
-    v.push(part("neck", Head, (0.0, 1.535, 0.0), (0.13, 0.09, 0.13), FABRIC, std));
-    v.push(part("hood", Head, (0.0, 1.68, 0.0), (0.27, 0.31, 0.28), HELMET, std));
-    v.push(part("hood rear plate", Head, (0.0, 1.68, -0.135), (0.22, 0.24, 0.03), HELMET, std));
-    v.push(part("crown plate", Head, (0.0, 1.848, 0.0), (0.20, 0.03, 0.20), HELMET, std));
-    v.push(part("brow bar", Head, (0.0, 1.765, 0.125), (0.22, 0.035, 0.04), HELMET, std));
-    v.push(part("skin band", Head, (0.0, 1.715, 0.130), (0.205, 0.058, 0.024), SKIN, std));
-    v.push(part("visor band", Head, (0.0, 1.652, 0.134), (0.220, 0.056, 0.024), VISOR, MAT_VISOR));
-    v.push(part("balaclava panel", Head, (0.0, 1.579, 0.117), (0.20, 0.095, 0.05), FABRIC, std));
-    v.push(part("ear cup L", Head, (0.150, 1.68, 0.0), (0.05, 0.14, 0.15), PLASTIC, std));
-    v.push(part("ear cup R", Head, (-0.150, 1.68, 0.0), (0.05, 0.14, 0.15), PLASTIC, std));
-    v.push(part("headset band", Head, (0.0, 1.822, 0.0), (0.315, 0.030, 0.07), PLASTIC, std));
-    v.push(part("mic boom", Head, (-0.135, 1.625, 0.075), (0.018, 0.018, 0.13), PLASTIC, std));
-    v.push(part("mic tip", Head, (-0.135, 1.615, 0.135), (0.035, 0.03, 0.03), PLASTIC, std));
-    // ---- arms ----
+    // ---- pelvis: trousers, the webbing belt, the pouch row ----
+    v.push(part("pelvis", Pelvis, (0.0, 0.955, 0.0), (0.355, 0.21, 0.235), TROUSER, std));
+    v.push(part("belt", Pelvis, (0.0, 1.062, 0.0), (0.39, 0.072, 0.27), WEBBING, std));
+    v.push(part("belt buckle", Pelvis, (0.0, 1.062, 0.138), (0.075, 0.05, 0.012), METAL_LIGHT, std));
+    // THE REAR POUCH ROW (#32): three pouches across the back of
+    // the belt, each with its flap and its brass clasp. This row is
+    // the rear view's signature furniture — it gets its own parts,
+    // not a texture's promise.
+    for (tag, x) in [("L", 0.128f32), ("C", 0.0), ("R", -0.128)] {
+        v.push(part(match tag { "L" => "rear pouch L", "C" => "rear pouch C", _ => "rear pouch R" },
+            Pelvis, (x, 1.028, -0.163), (0.112, 0.148, 0.058), POUCH, std));
+        v.push(part(match tag { "L" => "rear pouch flap L", "C" => "rear pouch flap C", _ => "rear pouch flap R" },
+            Pelvis, (x, 1.072, -0.196), (0.104, 0.068, 0.012), WEBBING, std));
+        v.push(part(match tag { "L" => "rear pouch clasp L", "C" => "rear pouch clasp C", _ => "rear pouch clasp R" },
+            Pelvis, (x, 1.048, -0.203), (0.02, 0.032, 0.008), METAL_LIGHT, std));
+    }
+    // One pouch at the front-left hip (#31); the rest of the front
+    // belt stays plain, the way his does.
+    v.push(part("front pouch", Pelvis, (0.145, 1.022, 0.148), (0.105, 0.135, 0.05), POUCH, std));
+    v.push(part("front pouch flap", Pelvis, (0.145, 1.062, 0.176), (0.097, 0.06, 0.012), WEBBING, std));
+    v.push(part("front pouch clasp", Pelvis, (0.145, 1.04, 0.183), (0.018, 0.03, 0.008), METAL_LIGHT, std));
+    // ---- the coat's skirt: band, rear and side panels on the
+    // pelvis; the front quarters ride the thighs, the way a coat's
+    // front drapes over each leg (and the only way a rigid skirt
+    // survives the crouch without tearing through the thigh).
+    v.push(part("coat skirt band", Pelvis, (0.0, 0.93, 0.0), (0.435, 0.13, 0.275), WAXED, std));
+    v.push(part("coat skirt rear", Pelvis, (0.0, 0.755, -0.1225), (0.42, 0.30, 0.04), WAXED, std));
+    v.push(part("coat vent shadow", Pelvis, (0.0, 0.68, -0.1465), (0.03, 0.17, 0.008), PLASTIC, std));
+    v.push(part("coat skirt side L", Pelvis, (0.2025, 0.755, 0.0), (0.035, 0.30, 0.245), WAXED, std));
+    v.push(part("coat skirt side R", Pelvis, (-0.2025, 0.755, 0.0), (0.035, 0.30, 0.245), WAXED, std));
+    v.push(part("coat front quarter L", ThighL, (0.112, 0.815, 0.122), (0.205, 0.31, 0.035), WAXED, std));
+    v.push(part("coat front quarter R", ThighR, (-0.112, 0.815, 0.122), (0.205, 0.31, 0.035), WAXED, std));
+    // ---- torso: the coat itself ----
+    v.push(part("coat torso", Torso, (0.0, 1.295, 0.0), (0.47, 0.45, 0.30), WAXED, std));
+    v.push(part("coat yoke", Torso, (0.0, 1.435, -0.1535), (0.40, 0.105, 0.013), WAXED, std));
+    // The shirt opening, kept narrow: a dark column between the
+    // coat's fronts — at panel width it read as a bib, not a shirt.
+    v.push(part("shirt chest", Torso, (0.0, 1.35, 0.152), (0.09, 0.27, 0.014), TROUSER, std));
+    v.push(part("chest pocket L", Torso, (0.125, 1.375, 0.156), (0.125, 0.105, 0.014), WAXED, std));
+    v.push(part("chest pocket R", Torso, (-0.125, 1.375, 0.156), (0.125, 0.105, 0.014), WAXED, std));
+    v.push(part("chest pocket flap L", Torso, (0.125, 1.415, 0.158), (0.125, 0.045, 0.016), WAXED, std));
+    v.push(part("chest pocket flap R", Torso, (-0.125, 1.415, 0.158), (0.125, 0.045, 0.016), WAXED, std));
+    // Coat buttons down his right front panel, beside the shirt V.
+    for (i, y) in [1.42f32, 1.31, 1.20].iter().enumerate() {
+        v.push(part(match i { 0 => "coat button 1", 1 => "coat button 2", _ => "coat button 3" },
+            Torso, (-0.095, *y, 0.153), (0.02, 0.02, 0.012), PLASTIC, std));
+    }
+    v.push(part("collar", Torso, (0.0, 1.525, -0.015), (0.27, 0.09, 0.25), WAXED, std));
+    v.push(part("shoulder L", Torso, (0.29, 1.478, 0.0), (0.185, 0.095, 0.27), WAXED, std));
+    v.push(part("shoulder R", Torso, (-0.29, 1.478, 0.0), (0.185, 0.095, 0.27), WAXED, std));
+    // The radio's shoulder strap: front, over the shoulder, and
+    // down the back on his left, brass-buckled at the chest (#31).
+    v.push(part("shoulder strap front", Torso, (0.155, 1.315, 0.160), (0.068, 0.42, 0.016), WEBBING, std));
+    v.push(part("shoulder strap top", Torso, (0.155, 1.532, 0.0), (0.068, 0.018, 0.33), WEBBING, std));
+    v.push(part("shoulder strap back", Torso, (0.155, 1.315, -0.160), (0.068, 0.42, 0.016), WEBBING, std));
+    v.push(part("shoulder strap buckle", Torso, (0.155, 1.44, 0.170), (0.052, 0.062, 0.010), METAL_LIGHT, std));
+    // The pack strap down the back, medial of the radio (#32): two
+    // brass buckles, and the ONE RE-SEWN PATCH — a paler canvas
+    // repair riding the strap where every rear view will find it.
+    v.push(part("pack strap back", Torso, (0.005, 1.29, -0.160), (0.075, 0.50, 0.016), WEBBING, std));
+    v.push(part("pack strap buckle 1", Torso, (0.005, 1.42, -0.170), (0.055, 0.06, 0.010), METAL_LIGHT, std));
+    v.push(part("pack strap buckle 2", Torso, (0.005, 1.20, -0.170), (0.055, 0.06, 0.010), METAL_LIGHT, std));
+    v.push(part("re-sewn strap patch", Torso, (0.005, 1.33, -0.169), (0.08, 0.10, 0.006), POUCH, std));
+    // The diagonal strap (#32), stepped across the pouch row's top
+    // from under the radio toward the right hip, brass-buckled.
+    v.push(part("diagonal strap 1", Torso, (0.07, 1.13, -0.196), (0.17, 0.055, 0.012), WEBBING, std));
+    v.push(part("diagonal strap 2", Torso, (-0.04, 1.06, -0.196), (0.17, 0.055, 0.012), WEBBING, std));
+    v.push(part("diagonal strap buckle", Torso, (-0.115, 1.02, -0.198), (0.055, 0.06, 0.012), METAL_LIGHT, std));
+    // THE RADIO (#32): high on the LEFT of the back, its top at the
+    // shoulder line — a dark case with its cap and knobs, and TWO
+    // WHIPS: the tall one straight, the shorter one bent at the tip
+    // the way the reference's second whip bends.
+    v.push(part("radio pack", Torso, (0.135, 1.35, -0.20), (0.18, 0.36, 0.095), RADIO, std));
+    v.push(part("radio cap", Torso, (0.135, 1.545, -0.20), (0.16, 0.05, 0.085), RADIO, std));
+    v.push(part("radio knob 1", Torso, (0.09, 1.585, -0.20), (0.03, 0.03, 0.03), PLASTIC, std));
+    v.push(part("radio knob 2", Torso, (0.17, 1.585, -0.20), (0.025, 0.03, 0.025), PLASTIC, std));
+    v.push(part("whip tall lower", Torso, (0.20, 1.87, -0.205), (0.013, 0.58, 0.013), PLASTIC, std));
+    v.push(part("whip tall upper", Torso, (0.20, 2.28, -0.205), (0.008, 0.26, 0.008), PLASTIC, std));
+    v.push(part("whip short lower", Torso, (0.115, 1.80, -0.205), (0.010, 0.44, 0.010), PLASTIC, std));
+    v.push(part("whip short tip", Torso, (0.128, 2.10, -0.205), (0.008, 0.18, 0.008), PLASTIC, std));
+    // The long gun, slung under the pack down his left side (#32):
+    // stock at the pack's hem, receiver, magazine, barrel to the knee.
+    v.push(part("slung gun stock", Torso, (0.23, 1.24, -0.09), (0.045, 0.13, 0.065), LEATHER, std));
+    v.push(part("slung gun receiver", Torso, (0.235, 1.02, -0.09), (0.05, 0.34, 0.085), METAL, std));
+    v.push(part("slung gun magazine", Torso, (0.235, 0.86, -0.05), (0.03, 0.15, 0.035), METAL, std));
+    v.push(part("slung gun barrel", Torso, (0.238, 0.66, -0.09), (0.02, 0.40, 0.02), METAL, std));
+    // The holster (#31/#32): worn leather on the RIGHT hip, the
+    // USP's grip above it, a webbing flap strap on its outer face.
+    v.push(part("holster", Pelvis, (-0.245, 1.00, 0.03), (0.07, 0.23, 0.125), LEATHER, std));
+    v.push(part("holster grip", Pelvis, (-0.245, 1.145, 0.03), (0.038, 0.075, 0.05), STRAP, std));
+    v.push(part("holster flap strap", Pelvis, (-0.283, 1.06, 0.03), (0.012, 0.10, 0.06), WEBBING, std));
+    // ---- head: bare, weathered — hair, ears, the box nose, and
+    // the painted face on its quad (see face_quad).
+    v.push(part("neck", Head, (0.0, 1.54, 0.0), (0.125, 0.10, 0.125), SKIN, std));
+    v.push(part("head", Head, (0.0, 1.70, 0.0), (0.235, 0.30, 0.25), SKIN, std));
+    v.push(part("hair cap", Head, (0.0, 1.80, 0.0), (0.25, 0.13, 0.27), HAIR, std));
+    v.push(part("hair back", Head, (0.0, 1.685, -0.131), (0.24, 0.25, 0.012), HAIR, std));
+    v.push(part("ear L", Head, (0.124, 1.68, 0.0), (0.024, 0.06, 0.05), SKIN, std));
+    v.push(part("ear R", Head, (-0.124, 1.68, 0.0), (0.024, 0.06, 0.05), SKIN, std));
+    // The nose — offset a whisper to his left: once broken, set
+    // imperfectly, the way the reference's sits.
+    v.push(part("nose", Head, (0.004, 1.662, 0.133), (0.046, 0.068, 0.032), SKIN, std));
+    // ---- arms: coat sleeves, leather gloves ----
     for (sx, up, fore, hand) in [
         (1.0f32, UpperArmL, ForearmL, HandL),
         (-1.0f32, UpperArmR, ForearmR, HandR),
     ] {
         v.push(part(if sx > 0.0 { "upper arm L" } else { "upper arm R" }, up,
-            (0.30 * sx, 1.315, 0.0), (0.15, 0.29, 0.155), CAMO, std));
-        v.push(part(if sx > 0.0 { "elbow pad L" } else { "elbow pad R" }, fore,
-            (0.30 * sx, 1.155, -0.05), (0.12, 0.09, 0.055), STRAP, std));
+            (0.30 * sx, 1.315, 0.0), (0.155, 0.29, 0.16), WAXED, std));
         v.push(part(if sx > 0.0 { "forearm L" } else { "forearm R" }, fore,
-            (0.30 * sx, 1.035, 0.005), (0.13, 0.27, 0.135), CAMO, std));
+            (0.30 * sx, 1.035, 0.005), (0.135, 0.27, 0.14), WAXED, std));
         v.push(part(if sx > 0.0 { "cuff L" } else { "cuff R" }, fore,
-            (0.30 * sx, 0.925, 0.008), (0.12, 0.05, 0.13), FABRIC, std));
+            (0.30 * sx, 0.928, 0.008), (0.128, 0.05, 0.135), WEBBING, std));
         v.push(part(if sx > 0.0 { "glove L" } else { "glove R" }, hand,
-            (0.30 * sx, 0.845, 0.02), (0.11, 0.145, 0.12), FABRIC, std));
-        v.push(part(if sx > 0.0 { "knuckle plate L" } else { "knuckle plate R" }, hand,
-            (0.30 * sx, 0.875, 0.058), (0.10, 0.045, 0.05), STRAP, std));
+            (0.30 * sx, 0.845, 0.02), (0.11, 0.145, 0.12), LEATHER, std));
         v.push(part(if sx > 0.0 { "thumb L" } else { "thumb R" }, hand,
-            (0.248 * sx, 0.825, 0.05), (0.04, 0.09, 0.045), FABRIC, std));
+            (0.248 * sx, 0.825, 0.05), (0.04, 0.09, 0.045), LEATHER, std));
     }
-    // ---- legs ----
-    // The model sheet's legs: long, with big capped knee pads and
-    // TALL lace-up boots — the shaft climbs to mid-shin, the laced
-    // front panel runs its full height, the trouser blouses over the
-    // boot top, and a thick sole grounds the whole figure. (The
-    // first build's boots were ankle shoes; the sheet corrected
-    // that, along with the proportions.)
+    // THE WATCH (left wrist): a dark strap around the forearm, and
+    // the case on the wrist's INNER face — face-inward, the way he
+    // wears it (#31/#32). It reads at close range or not at all,
+    // which is what a watch is.
+    v.push(part("watch strap", ForearmL, (0.30, 0.975, 0.005), (0.14, 0.032, 0.15), STRAP, std));
+    v.push(part("watch case (face-inward)", ForearmL, (0.228, 0.975, 0.005), (0.014, 0.05, 0.05), METAL, std));
+    // ---- legs: plain trousers, tall lace-up boots — no pads, no
+    // rigs; the street figure's legs are a working man's.
     for (sx, thigh, shin, foot) in [
         (1.0f32, ThighL, ShinL, FootL),
         (-1.0f32, ThighR, ShinR, FootR),
     ] {
         v.push(part(if sx > 0.0 { "thigh L" } else { "thigh R" }, thigh,
-            (0.115 * sx, 0.775, 0.0), (0.18, 0.19, 0.20), CAMO, std));
+            (0.115 * sx, 0.775, 0.0), (0.185, 0.20, 0.205), TROUSER, std));
         v.push(part(if sx > 0.0 { "thigh lower L" } else { "thigh lower R" }, thigh,
-            (0.115 * sx, 0.605, 0.0), (0.165, 0.16, 0.185), CAMO, std));
-        v.push(part(if sx > 0.0 { "thigh pocket L" } else { "thigh pocket R" }, thigh,
-            (0.115 * sx, 0.72, 0.108), (0.11, 0.13, 0.03), CAMO, std));
-        v.push(part(if sx > 0.0 { "knee pad L" } else { "knee pad R" }, shin,
-            (0.115 * sx, 0.53, 0.10), (0.165, 0.17, 0.06), PLASTIC, std));
-        v.push(part(if sx > 0.0 { "knee pad cap L" } else { "knee pad cap R" }, shin,
-            (0.115 * sx, 0.53, 0.128), (0.11, 0.11, 0.03), STRAP, std));
+            (0.115 * sx, 0.60, 0.0), (0.17, 0.17, 0.19), TROUSER, std));
         v.push(part(if sx > 0.0 { "shin upper L" } else { "shin upper R" }, shin,
-            (0.115 * sx, 0.435, 0.0), (0.16, 0.15, 0.175), CAMO, std));
-        v.push(part(if sx > 0.0 { "boot top strap L" } else { "boot top strap R" }, shin,
-            (0.115 * sx, 0.35, 0.0), (0.16, 0.04, 0.18), STRAP, std));
+            (0.115 * sx, 0.435, 0.0), (0.165, 0.16, 0.18), TROUSER, std));
+        v.push(part(if sx > 0.0 { "trouser cuff L" } else { "trouser cuff R" }, shin,
+            (0.115 * sx, 0.345, 0.0), (0.172, 0.055, 0.19), TROUSER, std));
         v.push(part(if sx > 0.0 { "boot shaft L" } else { "boot shaft R" }, shin,
-            (0.115 * sx, 0.225, 0.0), (0.145, 0.26, 0.16), LEATHER, std));
+            (0.115 * sx, 0.225, 0.0), (0.15, 0.26, 0.165), LEATHER, std));
         v.push(part(if sx > 0.0 { "boot lace panel L" } else { "boot lace panel R" }, shin,
-            (0.115 * sx, 0.24, 0.082), (0.095, 0.24, 0.025), STRAP, std));
+            (0.115 * sx, 0.24, 0.086), (0.095, 0.235, 0.024), STRAP, std));
         v.push(part(if sx > 0.0 { "boot foot L" } else { "boot foot R" }, foot,
-            (0.115 * sx, 0.055, 0.045), (0.14, 0.11, 0.30), LEATHER, std));
-        v.push(part(if sx > 0.0 { "boot instep L" } else { "boot instep R" }, foot,
-            (0.115 * sx, 0.115, 0.09), (0.095, 0.025, 0.13), STRAP, std));
+            (0.115 * sx, 0.055, 0.045), (0.145, 0.11, 0.30), LEATHER, std));
         v.push(part(if sx > 0.0 { "boot toe L" } else { "boot toe R" }, foot,
-            (0.115 * sx, 0.05, 0.185), (0.13, 0.085, 0.05), LEATHER, std));
+            (0.115 * sx, 0.05, 0.185), (0.135, 0.085, 0.05), LEATHER, std));
         v.push(part(if sx > 0.0 { "boot sole L" } else { "boot sole R" }, foot,
-            (0.115 * sx, 0.016, 0.03), (0.15, 0.032, 0.33), PLASTIC, std));
+            (0.115 * sx, 0.016, 0.03), (0.155, 0.032, 0.33), PLASTIC, std));
         v.push(part(if sx > 0.0 { "boot heel L" } else { "boot heel R" }, foot,
-            (0.115 * sx, 0.05, -0.105), (0.135, 0.10, 0.06), LEATHER, std));
+            (0.115 * sx, 0.05, -0.105), (0.14, 0.10, 0.06), LEATHER, std));
     }
-    // The sheet's drop-leg rig (his right thigh): a big holster body
-    // on two straps that wrap the thigh, flap on its outer face. His
-    // left thigh carries the smaller pouch on one strap.
-    v.push(part("holster strap upper R", ThighR, (-0.115, 0.79, 0.0), (0.19, 0.035, 0.215), STRAP, std));
-    v.push(part("holster strap lower R", ThighR, (-0.115, 0.635, 0.0), (0.19, 0.035, 0.215), STRAP, std));
-    v.push(part("thigh holster R", ThighR, (-0.245, 0.70, 0.01), (0.075, 0.26, 0.18), STRAP, std));
-    v.push(part("holster flap R", ThighR, (-0.29, 0.74, 0.01), (0.02, 0.16, 0.15), VEST, std));
-    v.push(part("thigh strap L", ThighL, (0.115, 0.79, 0.0), (0.19, 0.035, 0.215), STRAP, std));
-    v.push(part("thigh pouch L", ThighL, (0.24, 0.72, 0.01), (0.07, 0.19, 0.15), VEST, std));
-    // ---- finishing mass: rails, straps, pouches — the small boxes
-    // that keep silhouettes honest at silhouette distance.
-    v.push(part("helmet rail L", Head, (0.145, 1.745, 0.02), (0.03, 0.035, 0.17), PLASTIC, std));
-    v.push(part("helmet rail R", Head, (-0.145, 1.745, 0.02), (0.03, 0.035, 0.17), PLASTIC, std));
-    v.push(part("chest radio mic", Torso, (0.155, 1.415, 0.155), (0.055, 0.09, 0.035), PLASTIC, std));
-    v.push(part("forearm pocket L", ForearmL, (0.30, 1.07, 0.075), (0.10, 0.12, 0.03), CAMO, std));
-    v.push(part("dump pouch", Pelvis, (-0.10, 0.94, -0.15), (0.13, 0.13, 0.06), VEST, std));
-    v.push(part("drop pouch", Pelvis, (0.145, 0.88, 0.10), (0.10, 0.12, 0.05), VEST, std));
     // ---- the HK USP, in the right hand ----
     // Modelled along the hand's -Y axis (muzzle down at bind, like a
     // pistol held at rest); the arm chain's pitch raises it to the
-    // ready and the aim (see the pose tables).
+    // ready and the aim (see the pose tables). Unchanged from M6 —
+    // it was always his gun; only its slide's metal is re-sourced
+    // (the light-metal rect is brass now, and a brass slide is a
+    // different man's gun).
     let h = HandR;
     let hx = -0.30f32;
     v.push(part("USP grip", h, (hx, 0.835, 0.03), (0.042, 0.115, 0.055), STRAP, std));
     v.push(part("USP mag base", h, (hx, 0.775, 0.032), (0.046, 0.02, 0.058), METAL, std));
     v.push(part("USP frame", h, (hx, 0.895, 0.045), (0.040, 0.05, 0.16), METAL, std));
-    v.push(part("USP slide", h, (hx, 0.925, 0.045), (0.036, 0.028, 0.185), METAL_LIGHT, std));
+    v.push(part("USP slide", h, (hx, 0.925, 0.045), (0.036, 0.028, 0.185), METAL, std));
     v.push(part("USP barrel tip", h, (hx, 0.918, 0.135), (0.020, 0.020, 0.03), METAL, std));
     v.push(part("USP trigger guard", h, (hx, 0.855, 0.085), (0.012, 0.045, 0.07), METAL, std));
     v.push(part("USP rear sight", h, (hx, 0.948, -0.028), (0.026, 0.016, 0.02), METAL, std));
@@ -670,22 +876,27 @@ fn parts() -> Vec<Part> {
     v
 }
 
-/// The patch is a quad, not a box: its art has a reading direction,
-/// and only a placed quad controls which way is up and which way the
-/// eagle faces. It rides the right upper arm's outer face.
-fn patch_quad() -> ([Vec3; 4], Bone) {
-    // On the right upper arm's outer face (arm centre −0.30, half
-    // width 0.075). The sheet's patch is big — it covers most of the
-    // arm's width — so the quad is 0.125 × 0.135.
-    let x = -0.377;
+/// The face is a quad, not a box: its art has a reading direction,
+/// and only a placed quad controls which way is up. It rides the
+/// head box's front face, a whisper proud of it — chin at the
+/// collar's top edge, hairline where the hair cap takes over. (The
+/// M6 build's quad was the NSA shoulder patch; the patch is deleted
+/// — no labels on him — and the quad's craft moved to his face.)
+fn face_quad() -> ([Vec3; 4], Bone) {
+    // Corners in the box faces' own order — bottom-left, bottom-
+    // right, top-right, top-left as seen from outside (the front) —
+    // with the UVs the box code assigns those corners, so the
+    // painted face stands upright: region-top at the hairline,
+    // region-left on his right cheek.
+    let z = 0.1265;
     (
         [
-            Vec3::new(x, 1.3975, 0.0625),  // top, toward his front
-            Vec3::new(x, 1.3975, -0.0625), // top, toward his back
-            Vec3::new(x, 1.2625, -0.0625),
-            Vec3::new(x, 1.2625, 0.0625),
+            Vec3::new(-0.104, 1.570, z), // bottom, his right
+            Vec3::new(0.104, 1.570, z),  // bottom, his left
+            Vec3::new(0.104, 1.740, z),  // top, his left
+            Vec3::new(-0.104, 1.740, z), // top, his right
         ],
-        Bone::UpperArmR,
+        Bone::Head,
     )
 }
 
@@ -1101,19 +1312,20 @@ pub fn build_operator_frame(
             mat: p.mat,
         })
         .collect();
-    let (corners, bone) = patch_quad();
-    let uv = uv_rect(region::PATCH);
-    let patch = QuadSpec {
-        name: "NSA shoulder patch (quad)",
+    let (corners, bone) = face_quad();
+    let uv = uv_rect(region::FACE);
+    let face = QuadSpec {
+        name: "face (quad)",
         bone,
         corners,
-        normal: Vec3::new(-1.0, 0.0, 0.0),
-        // Corners are listed TL(front), TL(back), BL(back), BL(front);
-        // art-left is toward his front (+Z local).
-        uvs: [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]],
+        normal: Vec3::new(0.0, 0.0, 1.0),
+        // Corners are listed BL, BR, TR, TL as seen from the front;
+        // the box faces' UV order gives BL the rect's bottom-left,
+        // so the painted face stands upright.
+        uvs: [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]],
         mat: MAT_STANDARD,
     };
-    build_figure_frame(&specs, &[patch], frame, spot, ground_y, yaw_deg)
+    build_figure_frame(&specs, &[face], frame, spot, ground_y, yaw_deg)
 }
 
 /// A figure part, as data: one box in bind-pose local space, bound
@@ -1132,8 +1344,8 @@ pub struct PartSpec {
 }
 
 /// A figure quad, as data: four bind-pose corners on one bone with
-/// per-corner UVs and a bind-pose normal (the shoulder patch is the
-/// operator's instance; insignia and marks are the general case).
+/// per-corner UVs and a bind-pose normal (the operator's face is
+/// the instance at hand; insignia and marks are the general case).
 pub struct QuadSpec {
     pub name: &'static str,
     pub bone: Bone,
