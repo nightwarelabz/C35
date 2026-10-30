@@ -121,11 +121,7 @@ impl StaticWorld {
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_dist: f32) -> Option<Hit> {
         let mut best: Option<Hit> = None;
         for b in &self.boxes {
-            let inv = Vec3::new(
-                1.0 / dir.x,
-                1.0 / dir.y,
-                1.0 / dir.z,
-            );
+            let inv = Vec3::new(1.0 / dir.x, 1.0 / dir.y, 1.0 / dir.z);
             let mut tmin = 0.0f32;
             let mut tmax = max_dist;
             let mut normal = Vec3::ZERO;
@@ -217,11 +213,7 @@ impl StaticWorld {
         for _ in 0..2 {
             for b in &self.boxes {
                 let bot = Vec3::new(pos.x, pos.y + CAPSULE_RADIUS, pos.z);
-                let top = Vec3::new(
-                    pos.x,
-                    pos.y + 2.0 * CAPSULE_HALF + CAPSULE_RADIUS,
-                    pos.z,
-                );
+                let top = Vec3::new(pos.x, pos.y + 2.0 * CAPSULE_HALF + CAPSULE_RADIUS, pos.z);
                 // Nearest point on the segment to the box centre,
                 // then nearest point on the box to that.
                 let c = (b.min + b.max) * 0.5;
@@ -263,11 +255,7 @@ impl StaticWorld {
                 continue;
             }
             let bot = Vec3::new(feet.x, feet.y + CAPSULE_RADIUS, feet.z);
-            let top = Vec3::new(
-                feet.x,
-                feet.y + 2.0 * CAPSULE_HALF + CAPSULE_RADIUS,
-                feet.z,
-            );
+            let top = Vec3::new(feet.x, feet.y + 2.0 * CAPSULE_HALF + CAPSULE_RADIUS, feet.z);
             let c = (b.min + b.max) * 0.5;
             let ab = top - bot;
             let t = ((c - bot).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0);
@@ -281,14 +269,7 @@ impl StaticWorld {
     }
 }
 
-fn slab(
-    o: f32,
-    d: f32,
-    inv: f32,
-    lo: f32,
-    hi: f32,
-    axis: Vec3,
-) -> (f32, f32, Vec3) {
+fn slab(o: f32, d: f32, inv: f32, lo: f32, hi: f32, axis: Vec3) -> (f32, f32, Vec3) {
     if d.abs() < 1e-9 {
         if o < lo || o > hi {
             (f32::INFINITY, f32::NEG_INFINITY, Vec3::ZERO)
@@ -356,7 +337,11 @@ pub fn move_body(
     events: &mut EventLog,
     tick: u64,
 ) {
-    let accel = if body.grounded { GROUND_ACCEL } else { AIR_ACCEL };
+    let accel = if body.grounded {
+        GROUND_ACCEL
+    } else {
+        AIR_ACCEL
+    };
     let target = Vec3::new(wish.x * speed, 0.0, wish.z * speed);
     let mut hv = Vec3::new(body.vel.x, 0.0, body.vel.z);
     let diff = target - hv;
@@ -392,13 +377,7 @@ pub fn move_body(
                 let impact = -body.vel.y;
                 body.last_impact = impact;
                 if impact > 0.5 {
-                    events.push(
-                        tick,
-                        StimulusKind::Landing,
-                        body.feet,
-                        g.surface,
-                        impact,
-                    );
+                    events.push(tick, StimulusKind::Landing, body.feet, g.surface, impact);
                 }
             }
             body.feet.y = g.height;
@@ -574,5 +553,46 @@ impl HeightField {
             height: (self.height)(x, z),
             surface: SurfaceRecord::dry(SurfaceKind::Stone),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
+
+    fn unit_box() -> StaticWorld {
+        let mut world = StaticWorld::new();
+        world.add(BoxCollider::new(
+            Vec3::new(-1.0, -1.0, -1.0),
+            Vec3::new(1.0, 1.0, 1.0),
+            SurfaceRecord::dry(SurfaceKind::Stone),
+        ));
+        world
+    }
+
+    #[test]
+    fn raycast_hits_each_face_and_misses_a_clear_ray() {
+        let world = unit_box();
+        let cases = [
+            (Vec3::new(3.0, 0.0, 0.0), Vec3::new(-1.0, 0.0, 0.0), Vec3::X),
+            (Vec3::new(-3.0, 0.0, 0.0), Vec3::X, -Vec3::X),
+            (Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, -1.0, 0.0), Vec3::Y),
+            (Vec3::new(0.0, -3.0, 0.0), Vec3::Y, -Vec3::Y),
+            (Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0), Vec3::Z),
+            (Vec3::new(0.0, 0.0, -3.0), Vec3::Z, -Vec3::Z),
+        ];
+        for (origin, dir, expect_n) in cases {
+            let hit = world.raycast(origin, dir, 10.0).expect("hit");
+            assert!(
+                (hit.normal - expect_n).length() < 1e-4,
+                "from {origin:?} normal {:?} want {expect_n:?}",
+                hit.normal
+            );
+            assert!(hit.dist > 0.0 && hit.dist < 3.0, "dist {}", hit.dist);
+        }
+        assert!(world
+            .raycast(Vec3::new(0.0, 3.0, 3.0), Vec3::new(0.0, 0.0, 1.0), 10.0)
+            .is_none());
     }
 }

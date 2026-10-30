@@ -57,11 +57,7 @@ impl WallRun {
     /// to the wall (|v·n| ≤ half the speed), wall lean within
     /// the limit. `facing` is the horizontal unit facing.
     /// Returns None when any price is not met — no partial runs.
-    pub fn try_enter(
-        body: &Body,
-        facing: Vec3,
-        world: &StaticWorld,
-    ) -> Option<WallRun> {
+    pub fn try_enter(body: &Body, facing: Vec3, world: &StaticWorld) -> Option<WallRun> {
         let speed = body.horizontal_speed();
         if speed < MIN_ENTRY_SPEED {
             return None;
@@ -162,10 +158,15 @@ impl WallRun {
         // lateral offset each tick (the wall is the rail's
         // reference, not a suggestion).
         let probe = body.feet + Vec3::new(0.0, 1.0, 0.0);
-        if let Some(hit) = world.raycast(probe, -self.normal, CAPSULE_RADIUS + WALL_REACH) {
-            let want = hit.point + self.normal * (CAPSULE_RADIUS + 0.05);
-            body.feet.x = want.x;
-            body.feet.z = want.z;
+        match world.raycast(probe, -self.normal, CAPSULE_RADIUS + WALL_REACH) {
+            Some(hit) => {
+                let want = hit.point + self.normal * (CAPSULE_RADIUS + 0.05);
+                body.feet.x = want.x;
+                body.feet.z = want.z;
+            }
+            // The wall ended. Budget left is not a rail in the
+            // air — the run stops and the caller drops the body.
+            None => return false,
         }
         // Footfalls at the run's cadence: step length 0.86 m
         // at run speed (the gait table's run anchor).
@@ -189,5 +190,41 @@ impl WallRun {
     /// jump impulse. Returns the exit velocity.
     pub fn jump_exit(&self) -> Vec3 {
         self.normal * 3.0 + self.dir * self.speed() + Vec3::new(0.0, 4.6, 0.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traversal::events::EventLog;
+    use crate::traversal::physics::{Body, BoxCollider, StaticWorld, FIXED_DT};
+    use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
+
+    #[test]
+    fn run_ends_when_the_wall_ends() {
+        let mut world = StaticWorld::new();
+        world.add(BoxCollider::new(
+            Vec3::new(-0.3, 0.0, -1.0),
+            Vec3::new(0.0, 3.0, 1.0),
+            SurfaceRecord::dry(SurfaceKind::Brick),
+        ));
+        let mut body = Body::new(Vec3::new(0.5, 0.0, 0.0));
+        body.vel = Vec3::new(0.0, 0.0, 5.0);
+        let facing = Vec3::new(0.0, 0.0, 1.0);
+        let mut run = WallRun::try_enter(&body, facing, &world).expect("wall in reach");
+        let mut events = EventLog::new();
+        let mut held = true;
+        for t in 0..800 {
+            held = run.update(FIXED_DT, &mut body, &world, &mut events, t);
+            if !held {
+                break;
+            }
+        }
+        assert!(!held, "still running at z={}", body.feet.z);
+        assert!(
+            body.feet.z < 3.0,
+            "skated to z={} after the wall ended at 1",
+            body.feet.z
+        );
     }
 }

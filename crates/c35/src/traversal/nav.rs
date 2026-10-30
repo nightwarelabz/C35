@@ -517,7 +517,7 @@ pub fn nearest_poly(mesh: &NavMesh, p: Vec3) -> Option<usize> {
         .iter()
         .enumerate()
         .map(|(i, poly)| (i, (poly.center - p).length()))
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
 }
 
@@ -575,14 +575,16 @@ pub fn route(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Route> {
         id: usize,
     }
     impl Eq for Node {}
-    impl PartialOrd for Node {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            other.f.partial_cmp(&self.f)
-        }
-    }
     impl Ord for Node {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.partial_cmp(other).unwrap()
+            // BinaryHeap pops the greatest Ord. Reverse on
+            // total_cmp so NaN cannot panic the search.
+            other.f.total_cmp(&self.f)
+        }
+    }
+    impl PartialOrd for Node {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
         }
     }
     let heuristic = |_id: usize| 0.0f32;
