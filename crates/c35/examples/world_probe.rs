@@ -3,7 +3,11 @@
 //! the solar model can be checked against any almanac before a single
 //! shader consumes it. `cargo run --example world_probe -p c35`.
 
-use c35::world::{iso_utc, world_state, Observer};
+use c35::world::{days_from_civil, iso_utc, world_state, Observer};
+
+fn unix_utc(y: i64, m: u32, d: u32, hh: u32) -> f64 {
+    days_from_civil(y, m, d) as f64 * 86400.0 + f64::from(hh) * 3600.0
+}
 
 fn show(label: &str, unix: f64, obs: &Observer) {
     let w = world_state(unix, obs);
@@ -21,6 +25,14 @@ fn show(label: &str, unix: f64, obs: &Observer) {
         w.water_ice,
         w.daylight,
         w.star_intensity,
+    );
+    println!(
+        "{:26} moon el {:+7.2}°  az {:6.1}°  illuminated {:.3}  key {:.3}",
+        "",
+        w.moon_elevation_deg,
+        w.moon_azimuth_deg,
+        w.moon_illuminated,
+        w.moon_color.length(),
     );
 }
 
@@ -49,4 +61,15 @@ fn main() {
     show("Sydney Jun 15 noon", 1781488800.0, &sydney);
     // The stated fallback.
     show("equator fallback noon", 1768500000.0, &Observer::unknown());
+    println!();
+    // USNO illuminated-fraction pins (05:00 UTC = midnight, 5h west).
+    // The unit tests own the 1% bound; this print is the almanac check.
+    for (label, y, m, d) in [
+        ("USNO new    2026-01-18", 2026, 1, 18),
+        ("USNO 1st q  2026-01-26", 2026, 1, 26),
+        ("USNO full   2026-07-29", 2026, 7, 29),
+        ("USNO w.full 2026-01-03", 2026, 1, 3),
+    ] {
+        show(label, unix_utc(y, m, d, 5), &chicago);
+    }
 }

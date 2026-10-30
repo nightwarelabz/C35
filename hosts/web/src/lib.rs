@@ -297,6 +297,7 @@ async fn run() {
                      observer         : {}\n\
                      solar time src   : {}\n\
                      sun              : elevation {:+.2} deg, azimuth {:.1} deg, day length {:.1} h\n\
+                     moon             : elevation {:+.2} deg, azimuth {:.1} deg, illuminated {:.3}\n\
                      season           : cold {:.2} / autumn {:.2} / spring {:.2} / summer {:.2}\n\
                      land & water     : snow line {:+.1}, water ice {:.2}, wave scale {:.2}",
                     renderer.backend_name(),
@@ -321,6 +322,9 @@ async fn run() {
                     world.sun_elevation_deg,
                     world.sun_azimuth_deg,
                     world.day_length_hours,
+                    world.moon_elevation_deg,
+                    world.moon_azimuth_deg,
+                    world.moon_illuminated,
                     world.cold,
                     world.autumn,
                     world.spring,

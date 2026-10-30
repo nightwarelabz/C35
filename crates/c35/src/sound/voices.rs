@@ -443,7 +443,7 @@ impl VoiceGen for ReportMurmur {
         let mut s = 0.0f32;
         for (bt, bf) in self.blips.iter() {
             let dt = self.t - bt;
-            if dt >= 0.0 && dt < 0.10 {
+            if (0.0..0.10).contains(&dt) {
                 self.osc.freq = *bf;
                 s += self.osc.next() * decay_exp(dt, 0.03) * 0.5;
             }

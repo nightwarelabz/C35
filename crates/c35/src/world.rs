@@ -19,6 +19,15 @@
 //! elevation/azimuth by spherical geometry. Day length is not stored or
 //! tabled anywhere — it falls out of the sunrise hour angle.
 //!
+//! The moon is the same clock. Geocentric ecliptic place is a truncated
+//! Meeus ch. 47 series (the periodic terms that move the disk by more
+//! than a hundredth of a degree, plus the chapter's additive terms);
+//! the illuminated fraction is Meeus ch. 48's low-accuracy formula.
+//! Both are pure functions of the UTC instant — no target branch, no
+//! table beyond the published coefficients — so native and web evaluate
+//! the same disk. The fraction scales the sky wash, the sea, and the
+//! key light the existing shaders already read. Nothing here is a pass.
+//!
 //! Season factors are smooth functions of day-of-year, hemisphere-flipped,
 //! anchored where Simulacrum's seasons proved out: cold peaks mid-January,
 //! autumn peaks ~Oct 19, spring ~Apr 16 (northern hemisphere). They agree
@@ -80,12 +89,19 @@ pub struct WorldState {
     /// sun disc strength (0 once the disc has fully set).
     pub sun_glow: Vec3,
     pub sun_disc: f32,
-    /// Unit vector toward the moon. The moon is a *faint key light only*:
-    /// its direction is mirrored from the sun's (azimuth + 180°, elevation
-    /// reflected) — phase is not modelled. Black when the sun is up.
+    /// Unit vector toward the moon (geocentric, Meeus ch. 47). The key
+    /// light is black when the sun is up, the moon is below the horizon,
+    /// or the disk is dark — phase is [`WorldState::moon_illuminated`].
     pub moon_dir: Vec3,
+    pub moon_elevation_deg: f32,
+    pub moon_azimuth_deg: f32,
+    /// Geocentric illuminated fraction of the lunar disk, 0 = new, 1 = full.
+    /// Meeus ch. 48. Sky wash, sea glitter, and the key light all scale by it.
+    pub moon_illuminated: f32,
     pub moon_color: Vec3,
-    /// Moon disc strength for the sky shader (0 in daylight).
+    /// Moon disc surface strength for the sky shader (0 in daylight and
+    /// when the moon has set). The terminator itself is this fraction,
+    /// applied in the sky shader — a new moon draws no disk.
     pub moon_disc: f32,
 
     pub ambient_sky: Vec3,
@@ -177,6 +193,273 @@ fn gauss_day(f: f32, peak: f32, sigma: f32) -> f32 {
     (-(d * d) / (sigma * sigma)).exp()
 }
 
+// ---- moon (Meeus, Astronomical Algorithms, ch. 47 and ch. 48) ----
+//
+// Low precision on purpose: the disk in the sky is a fraction of a
+// degree wide, and the illuminated-fraction test is one percentage
+// point. Ch. 48's short formula is the one Meeus rates to the second
+// decimal of k. Ch. 47 supplies the place. Geocentric — horizontal
+// parallax is under a degree and is not applied. Nutation is omitted.
+// Every angle is reduced into a single turn before it reaches sin, so
+// the large mean-motion terms do not depend on libm range reduction.
+
+fn julian_centuries(unix_seconds: f64) -> f64 {
+    let jd = unix_seconds / 86400.0 + 2_440_587.5;
+    (jd - 2_451_545.0) / 36_525.0
+}
+
+fn wrap_deg(x: f64) -> f64 {
+    x.rem_euclid(360.0)
+}
+
+fn sin_deg(d: f64) -> f64 {
+    wrap_deg(d).to_radians().sin()
+}
+
+fn cos_deg(d: f64) -> f64 {
+    wrap_deg(d).to_radians().cos()
+}
+
+fn finite_f32(x: f64) -> f32 {
+    let y = x as f32;
+    if y.is_finite() {
+        y
+    } else {
+        0.0
+    }
+}
+
+/// Moon's mean longitude L′ (degrees), Meeus ch. 47.
+fn moon_mean_longitude(t: f64) -> f64 {
+    218.316_447_7
+        + (481_267.881_234_21 + (-0.001_578_6 + (1.0 / 538_841.0 - t / 65_194_000.0) * t) * t) * t
+}
+
+/// Mean elongation D (degrees).
+fn moon_mean_elongation(t: f64) -> f64 {
+    297.850_192_1
+        + (445_267.111_403_4 + (-0.001_881_9 + (1.0 / 545_868.0 - t / 113_065_000.0) * t) * t) * t
+}
+
+/// Sun's mean anomaly M (degrees).
+fn sun_mean_anomaly(t: f64) -> f64 {
+    357.529_109_2 + (35_999.050_290_9 + (-0.000_153_6 + t / 24_490_000.0) * t) * t
+}
+
+/// Moon's mean anomaly M′ (degrees).
+fn moon_mean_anomaly(t: f64) -> f64 {
+    134.963_396_4
+        + (477_198.867_505_5 + (0.008_741_4 + (1.0 / 69_699.0 - t / 14_712_000.0) * t) * t) * t
+}
+
+/// Moon's argument of latitude F (degrees).
+fn moon_arg_latitude(t: f64) -> f64 {
+    93.272_095
+        + (483_202.017_523_3 + (-0.003_653_9 + (-1.0 / 3_526_000.0 + t / 863_310_000.0) * t) * t)
+            * t
+}
+
+/// Illuminated fraction of the lunar disk, Meeus ch. 48 (low accuracy).
+///
+/// Geocentric and independent of the observer. `0` is new, `1` is full.
+/// The result is clamped to `[0, 1]`; the formula already lands there
+/// for any finite instant.
+pub fn moon_illuminated_fraction(unix_seconds: f64) -> f64 {
+    let t = julian_centuries(unix_seconds);
+    let d = wrap_deg(moon_mean_elongation(t));
+    let m = wrap_deg(sun_mean_anomaly(t));
+    let mp = wrap_deg(moon_mean_anomaly(t));
+    // Phase angle, degrees. Coefficients are Meeus's.
+    let i = 180.0 - d - 6.289 * sin_deg(mp) + 2.100 * sin_deg(m)
+        - 1.274 * sin_deg(2.0 * d - mp)
+        - 0.658 * sin_deg(2.0 * d)
+        - 0.214 * sin_deg(2.0 * mp)
+        - 0.110 * sin_deg(d);
+    let k = (1.0 + cos_deg(i)) * 0.5;
+    if k.is_finite() {
+        k.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// (D, M, M′, F, Σl, Σb). Σl and Σb are in units of 10⁻⁶ degree, the
+/// unit of Meeus tables 47.A and 47.B. Rows are the terms at or above
+/// 0.01° in longitude or 0.017° in latitude — what is left moves the
+/// disk by less than its own low-precision budget. A zero coefficient
+/// means that row does not contribute to that coordinate.
+const LUNAR_TERMS: [(i8, i8, i8, i8, f64, f64); 26] = [
+    // longitude, table 47.A, |Σl| ≥ 10_000
+    (0, 0, 1, 0, 6_288_774.0, 0.0),
+    (2, 0, -1, 0, 1_274_027.0, 0.0),
+    (2, 0, 0, 0, 658_314.0, 0.0),
+    (0, 0, 2, 0, 213_618.0, 0.0),
+    (0, 1, 0, 0, -185_116.0, 0.0),
+    (0, 0, 0, 2, -114_332.0, 0.0),
+    (2, 0, -2, 0, 58_793.0, 0.0),
+    (2, -1, -1, 0, 57_066.0, 0.0),
+    (2, 0, 1, 0, 53_322.0, 0.0),
+    (2, -1, 0, 0, 45_758.0, 0.0),
+    (0, 1, -1, 0, -40_923.0, 0.0),
+    (1, 0, 0, 0, -34_720.0, 0.0),
+    (0, 1, 1, 0, -30_383.0, 0.0),
+    (2, 0, 0, -2, 15_327.0, 0.0),
+    (0, 0, 1, 2, -12_528.0, 0.0),
+    (0, 0, 1, -2, 10_980.0, 0.0),
+    (4, 0, -1, 0, 10_675.0, 0.0),
+    (0, 0, 3, 0, 10_034.0, 0.0),
+    // latitude, table 47.B, |Σb| ≥ 17_000
+    (0, 0, 0, 1, 0.0, 5_128_122.0),
+    (0, 0, 1, 1, 0.0, 280_602.0),
+    (0, 0, 1, -1, 0.0, 277_693.0),
+    (2, 0, 0, -1, 0.0, 173_237.0),
+    (2, 0, -1, 1, 0.0, 55_413.0),
+    (2, 0, -1, -1, 0.0, 46_271.0),
+    (2, 0, 0, 1, 0.0, 32_573.0),
+    (0, 0, 2, 1, 0.0, 17_198.0),
+];
+
+fn eccentricity_scale(sun_anomaly_factor: i8, e: f64) -> f64 {
+    match sun_anomaly_factor {
+        1 | -1 => e,
+        2 | -2 => e * e,
+        _ => 1.0,
+    }
+}
+
+/// Geocentric ecliptic longitude and latitude, degrees, of date.
+fn lunar_ecliptic(t: f64) -> (f64, f64) {
+    let lp = wrap_deg(moon_mean_longitude(t));
+    let d = wrap_deg(moon_mean_elongation(t));
+    let m = wrap_deg(sun_mean_anomaly(t));
+    let mp = wrap_deg(moon_mean_anomaly(t));
+    let f = wrap_deg(moon_arg_latitude(t));
+    let e = 1.0 + (-0.002_516 - 0.000_007_4 * t) * t;
+
+    let mut sigma_l = 0.0;
+    let mut sigma_b = 0.0;
+    for (d_n, m_n, mp_n, f_n, lon_u, lat_u) in LUNAR_TERMS {
+        let arg =
+            d * f64::from(d_n) + m * f64::from(m_n) + mp * f64::from(mp_n) + f * f64::from(f_n);
+        let scale = eccentricity_scale(m_n, e);
+        let s = sin_deg(arg);
+        sigma_l += lon_u * scale * s;
+        sigma_b += lat_u * scale * s;
+    }
+
+    // Additive terms, Meeus ch. 47 (still in 10⁻⁶ degree).
+    let a1 = wrap_deg(119.75 + 131.849 * t);
+    let a2 = wrap_deg(53.09 + 479_264.290 * t);
+    let a3 = wrap_deg(313.45 + 481_266.484 * t);
+    sigma_l += 3_958.0 * sin_deg(a1) + 1_962.0 * sin_deg(lp - f) + 318.0 * sin_deg(a2);
+    sigma_b += -2_235.0 * sin_deg(lp)
+        + 382.0 * sin_deg(a3)
+        + 175.0 * sin_deg(a1 - f)
+        + 175.0 * sin_deg(a1 + f)
+        + 127.0 * sin_deg(lp - mp)
+        - 115.0 * sin_deg(lp + mp);
+
+    (wrap_deg(lp + sigma_l / 1_000_000.0), sigma_b / 1_000_000.0)
+}
+
+/// Mean obliquity of the ecliptic, degrees (Meeus ch. 22). Nutation omitted.
+fn mean_obliquity_deg(t: f64) -> f64 {
+    23.439_291_1 + (-0.013_004_167 + (-0.000_000_163_9 + 0.000_000_503_6 * t) * t) * t
+}
+
+/// Greenwich mean sidereal time, degrees (Meeus ch. 12).
+fn gmst_deg(unix_seconds: f64) -> f64 {
+    let jd = unix_seconds / 86400.0 + 2_440_587.5;
+    let d = jd - 2_451_545.0;
+    let t = d / 36_525.0;
+    let theta =
+        280.460_618_37 + 360.985_647_366_29 * d + 0.000_387_933 * t * t - t * t * t / 38_710_000.0;
+    wrap_deg(theta)
+}
+
+/// Equatorial coordinates (right ascension, declination), degrees.
+fn ecliptic_to_equatorial(lon_deg: f64, lat_deg: f64, t: f64) -> (f64, f64) {
+    let eps = mean_obliquity_deg(t);
+    let sb = sin_deg(lat_deg);
+    let cb = cos_deg(lat_deg);
+    let sl = sin_deg(lon_deg);
+    let cl = cos_deg(lon_deg);
+    let se = sin_deg(eps);
+    let ce = cos_deg(eps);
+    // cos(latitude) is ~1 for the moon (β stays inside ±6°). The floor
+    // keeps a pathological instant from dividing by zero.
+    let cb_safe = if cb.abs() < 1.0e-8 {
+        1.0e-8_f64.copysign(cb)
+    } else {
+        cb
+    };
+    let dec = (sb * ce + cb * se * sl)
+        .clamp(-1.0, 1.0)
+        .asin()
+        .to_degrees();
+    let ra = (sl * ce - (sb / cb_safe) * se).atan2(cl).to_degrees();
+    (wrap_deg(ra), dec)
+}
+
+/// Longitude the moon's hour angle is reckoned from. Longitude wins;
+/// a UTC offset stands in as its standard meridian (15° per hour);
+/// with neither, the observer is taken to sit on the Greenwich meridian
+/// — the same fallback the solar model uses when it has no longitude.
+fn observer_longitude_deg(observer: &Observer) -> f64 {
+    if let Some(lon) = observer.longitude_deg {
+        f64::from(lon)
+    } else if let Some(off) = observer.utc_offset_minutes {
+        f64::from(off) / 4.0
+    } else {
+        0.0
+    }
+}
+
+struct MoonPlace {
+    dir: Vec3,
+    elevation_deg: f32,
+    azimuth_deg: f32,
+    illuminated: f32,
+}
+
+/// Horizontal place of the moon in the engine's world frame
+/// (east = +X, up = +Y, north = −Z), plus the illuminated fraction.
+fn moon_place(unix_seconds: f64, latitude_deg: f32, observer: &Observer) -> MoonPlace {
+    let t = julian_centuries(unix_seconds);
+    let (lon, lat) = lunar_ecliptic(t);
+    let (ra, dec) = ecliptic_to_equatorial(lon, lat, t);
+    let lst = wrap_deg(gmst_deg(unix_seconds) + observer_longitude_deg(observer));
+    let mut ha_deg = wrap_deg(lst - ra);
+    if ha_deg > 180.0 {
+        ha_deg -= 360.0;
+    }
+    let ha = ha_deg.to_radians();
+    let dec_r = dec.to_radians();
+    let phi = f64::from(latitude_deg).to_radians();
+    // Same horizon basis as the sun, so a shared shader reads both.
+    let east = -dec_r.cos() * ha.sin();
+    let north = dec_r.sin() * phi.cos() - dec_r.cos() * phi.sin() * ha.cos();
+    let up = dec_r.sin() * phi.sin() + dec_r.cos() * phi.cos() * ha.cos();
+    let dir = {
+        let v = Vec3::new(finite_f32(east), finite_f32(up), finite_f32(-north));
+        let l2 = v.length_squared();
+        if l2 > 1.0e-12 {
+            v * l2.sqrt().recip()
+        } else {
+            Vec3::Y
+        }
+    };
+    let elev = finite_f32(up.clamp(-1.0, 1.0).asin().to_degrees());
+    let azim = finite_f32(east.atan2(north).to_degrees().rem_euclid(360.0));
+    let k = finite_f32(moon_illuminated_fraction(unix_seconds));
+    MoonPlace {
+        dir,
+        elevation_deg: elev,
+        azimuth_deg: azim,
+        illuminated: k.clamp(0.0, 1.0),
+    }
+}
+
 /// Compute the full world state for one instant and observer.
 pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
     let (lat_deg, lat_known) = match observer.latitude_deg {
@@ -212,7 +495,8 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
         + 0.00148 * (3.0 * gamma).sin();
     // Equation of time (minutes).
     let eqtime = 229.18
-        * (0.000075 + 0.001868 * gamma.cos() - 0.032077 * gamma.sin()
+        * (0.000075 + 0.001868 * gamma.cos()
+            - 0.032077 * gamma.sin()
             - 0.014615 * (2.0 * gamma).cos()
             - 0.040849 * (2.0 * gamma).sin());
 
@@ -265,7 +549,8 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
     let cold = cold_wave.powf(1.35);
     let autumn = gauss_day(season_day, 292.0, 26.0); // peak ~Oct 19
     let spring = gauss_day(season_day, 106.0, 24.0); // peak ~Apr 16
-    let summer_wave = 0.5 + 0.5 * (2.0 * std::f32::consts::PI * (season_day - 201.0) / 365.25).cos();
+    let summer_wave =
+        0.5 + 0.5 * (2.0 * std::f32::consts::PI * (season_day - 201.0) / 365.25).cos();
     let summer = summer_wave.powf(1.2);
 
     // ---- light & palette derivation ----
@@ -332,33 +617,46 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
     mid *= 1.0 + (pale.y - 1.0) * cold * daylight;
     hor *= 1.0 + (pale.z - 1.0) * cold * daylight;
 
-    // Hemisphere ambient: strong in day, ember-lit at dusk, moon-dim at night.
+    // Moon, from the same instant. The night gate is the old one —
+    // zero for every sun elevation ≥ −1° — so a daylight frame's moon
+    // term stays exactly black. Above the horizon, and in proportion
+    // to the illuminated fraction, the moon washes the sky (and
+    // therefore the sea, which reflects that sky) and supplies the
+    // key light.
+    let moon = moon_place(unix_seconds, lat_deg, observer);
+    let night = smoothstep(-1.0, -6.0, el);
+    let above = smoothstep(-0.8, 3.0, moon.elevation_deg);
+    let lamp = night * above * moon.illuminated;
+    let wash = Vec3::new(0.050, 0.068, 0.120) * lamp;
+    zen += wash * 0.50;
+    mid += wash * 0.80;
+    hor += wash * 0.35;
+
+    // Hemisphere ambient: strong in day, ember-lit at dusk, and at
+    // night only as bright as the moon's illuminated fraction allows.
     let amb_day_sky = Vec3::new(0.30, 0.375, 0.52) * (0.45 + 0.55 * daylight);
     let amb_sky = mix3(Vec3::new(0.020, 0.028, 0.052), amb_day_sky, daylight)
-        + Vec3::new(0.10, 0.045, 0.015) * dusk_glow;
+        + Vec3::new(0.10, 0.045, 0.015) * dusk_glow
+        + Vec3::new(0.028, 0.038, 0.070) * lamp;
     let amb_ground = mix3(
         Vec3::new(0.010, 0.010, 0.014),
         Vec3::new(0.145, 0.115, 0.095) * (0.4 + 0.6 * daylight),
         daylight,
-    );
+    ) + Vec3::new(0.012, 0.014, 0.020) * lamp;
 
     // Fog: the horizon colour, away from the sun; a touch denser in cold
-    // haze, a touch thinner at night.
+    // haze, a touch thinner at night. The moon wash is already in `hor`.
     let fog_color = hor * 0.96 + Vec3::new(0.02, 0.015, 0.01);
     let fog_density = 0.00135 * (1.0 + 0.25 * cold) * (1.0 - 0.25 * (1.0 - daylight));
 
-    // Moon: faint key light mirrored from the sun (phase not modelled).
-    let moon_in = smoothstep(-1.0, -6.0, el);
-    let moon_el = (-el).clamp(5.0, 55.0);
-    let moon_az = (sun_azim + 180.0).to_radians();
-    let moon_dir = Vec3::new(
-        moon_el.to_radians().cos() * moon_az.sin(),
-        moon_el.to_radians().sin(),
-        -moon_el.to_radians().cos() * moon_az.cos(),
-    )
-    .normalize();
-    let moon_color = Vec3::new(0.42, 0.52, 0.74) * (0.34 * moon_in);
-    let moon_disc = 1.5 * moon_in;
+    // Key light matches the pre-ephemeris full-moon night when the disk
+    // is full and up (0.34 × the pale blue). A new moon, or a moon that
+    // has set, contributes nothing. Disc *surface* brightness is not
+    // scaled by the fraction — the sky shader's terminator does that,
+    // so a quarter shows a half disk at the full disk's surface
+    // brightness while the landscape and the sea see half the light.
+    let moon_color = Vec3::new(0.42, 0.52, 0.74) * (0.34 * lamp);
+    let moon_disc = 1.5 * night * above;
 
     let star_intensity = smoothstep(-8.0, -16.0, el);
 
@@ -382,7 +680,10 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
         sun_color,
         sun_glow,
         sun_disc,
-        moon_dir,
+        moon_dir: moon.dir,
+        moon_elevation_deg: moon.elevation_deg,
+        moon_azimuth_deg: moon.azimuth_deg,
+        moon_illuminated: moon.illuminated,
         moon_color,
         moon_disc,
         ambient_sky: amb_sky,
@@ -419,4 +720,164 @@ pub fn iso_utc(unix_seconds: f64) -> String {
         (secs % 3600) / 60,
         secs % 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unix seconds for a UTC civil instant, through the engine's calendar.
+    fn unix_utc(y: i64, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> f64 {
+        let days = days_from_civil(y, m, d) as f64;
+        days * 86400.0 + f64::from(hh) * 3600.0 + f64::from(mm) * 60.0 + f64::from(ss)
+    }
+
+    /// One percentage point of the disk. USNO publishes k to two
+    /// decimals; this is the bound that fails the pin.
+    const USNO_ABS: f64 = 0.01;
+
+    fn pin_fraction(unix: f64, usno: f64, label: &str) {
+        let k = moon_illuminated_fraction(unix);
+        let err = (k - usno).abs();
+        assert!(
+            err <= USNO_ABS,
+            "{label}: computed {k:.4}, USNO {usno:.2}, |Δ| {err:.4} exceeds {USNO_ABS}"
+        );
+        // The renderer stores the same fraction, not a second model.
+        let w = world_state(unix, &Observer::new(41.88, -87.63));
+        let stored = f64::from(w.moon_illuminated);
+        assert!(
+            (stored - k).abs() < 1.0e-5,
+            "{label}: WorldState fraction {stored} drifted from {k}"
+        );
+    }
+
+    // USNO, "Fraction of the Moon Illuminated", geocentric, at midnight
+    // 5.0 hours west of Greenwich — 05:00 UTC. Table for 2026:
+    // https://aa.usno.navy.mil/calculated/moon/fraction?submit=Get+Data&task=00&tz=5&tz_label=false&tz_sign=-1&year=2026
+    //
+    // The phase each date belongs to is USNO, "Dates of Primary Phases
+    // of the Moon" (Universal Time):
+    // https://aa.usno.navy.mil/calculated/moon/phases?date=2025-08-19&format=p&nump=50&submit=Get+Data
+    //   New Moon       2026 Jan 18  19:52
+    //   First Quarter  2026 Jan 26  04:47
+    //   Full Moon      2026 Jan  3  10:03   (northern winter)
+    //   Full Moon      2026 Jul 29  14:36
+    // The pinned number is the published daily fraction at 05:00 UTC,
+    // not a phase instant rounded by hand.
+
+    #[test]
+    fn usno_new_moon_2026_01_18() {
+        let u = unix_utc(2026, 1, 18, 5, 0, 0);
+        assert_eq!(iso_utc(u), "2026-01-18T05:00:00Z");
+        // Published 0.00. Still falling into the new moon at 19:52 UT
+        // (Jan 17 is 0.03, Jan 19 is 0.00).
+        pin_fraction(u, 0.00, "new moon 2026-01-18");
+    }
+
+    #[test]
+    fn usno_first_quarter_2026_01_26() {
+        let u = unix_utc(2026, 1, 26, 5, 0, 0);
+        assert_eq!(iso_utc(u), "2026-01-26T05:00:00Z");
+        // Published 0.50, and the fraction is increasing through the
+        // day (Jan 25 is 0.39, Jan 27 is 0.62): first quarter, thirteen
+        // minutes after the 04:47 UT phase.
+        pin_fraction(u, 0.50, "first quarter 2026-01-26");
+    }
+
+    #[test]
+    fn usno_full_moon_2026_07_29() {
+        let u = unix_utc(2026, 7, 29, 5, 0, 0);
+        assert_eq!(iso_utc(u), "2026-07-29T05:00:00Z");
+        // Published 1.00. Full moon the same day at 14:36 UT.
+        pin_fraction(u, 1.00, "full moon 2026-07-29");
+    }
+
+    #[test]
+    fn usno_winter_full_moon_2026_01_03() {
+        let u = unix_utc(2026, 1, 3, 5, 0, 0);
+        assert_eq!(iso_utc(u), "2026-01-03T05:00:00Z");
+        // Published 1.00. Full moon the same day at 10:03 UT, in the
+        // engine's deep-winter cold (the cold factor peaks Jan 15).
+        pin_fraction(u, 1.00, "winter full moon 2026-01-03");
+    }
+
+    #[test]
+    fn fraction_is_deterministic_and_geocentric() {
+        let u = unix_utc(2026, 1, 26, 5, 0, 0);
+        let a = moon_illuminated_fraction(u);
+        let b = moon_illuminated_fraction(u);
+        assert_eq!(a.to_bits(), b.to_bits());
+        let chicago = world_state(u, &Observer::new(41.88, -87.63));
+        let greenwich = world_state(u, &Observer::unknown());
+        assert_eq!(
+            chicago.moon_illuminated.to_bits(),
+            greenwich.moon_illuminated.to_bits()
+        );
+        // Place follows the observer. The unknown-location fallback is
+        // the Greenwich meridian, not Chicago.
+        let same_place = chicago.moon_elevation_deg == greenwich.moon_elevation_deg
+            && chicago.moon_azimuth_deg == greenwich.moon_azimuth_deg;
+        assert!(!same_place, "observer did not move the moon");
+    }
+
+    #[test]
+    fn daylight_pin_moon_term_is_black() {
+        // M2 winter-morning proof pin: 2026-01-15 08:00 CST = 14:00 UTC.
+        // The sun is up, so the moon term is exactly black — the same
+        // gate as the mirrored moon — and a daylight frame does not
+        // move because of this change.
+        let w = world_state(
+            unix_utc(2026, 1, 15, 14, 0, 0),
+            &Observer::new(41.88, -87.63),
+        );
+        assert!(w.sun_elevation_deg > 1.0, "sun {}", w.sun_elevation_deg);
+        assert_eq!(w.moon_color, Vec3::ZERO);
+        assert_eq!(w.moon_disc, 0.0);
+        assert!(w.moon_dir.is_finite());
+        let len = w.moon_dir.length();
+        assert!((len - 1.0).abs() < 1.0e-5, "moon dir length {len}");
+    }
+
+    #[test]
+    fn new_moon_night_key_stays_dark() {
+        // Chicago, the pinned new moon. The PS1.5 sodium shore is a
+        // horizon band of about 0.14 (shaders/common.wgsl). The key
+        // light has to stay well under that, or the moon — not the
+        // shore — carries the frame.
+        let w = world_state(
+            unix_utc(2026, 1, 18, 5, 0, 0),
+            &Observer::new(41.88, -87.63),
+        );
+        assert!(w.sun_elevation_deg < -8.0, "sun {}", w.sun_elevation_deg);
+        assert!(w.moon_illuminated < 0.02, "k {}", w.moon_illuminated);
+        assert!(
+            w.moon_color.length() < 0.02,
+            "moon key {} elev {}",
+            w.moon_color.length(),
+            w.moon_elevation_deg
+        );
+    }
+
+    #[test]
+    fn winter_full_moon_lights_sky_when_up() {
+        // Local midnight in Chicago (CST, UTC−6) on the winter full
+        // moon's night. The disk is essentially full and, opposite a
+        // sun at southern declination, high in the northern sky. The
+        // sea reflects `sky_*` and glitters off `moon_color`; both have
+        // to be carrying moonlight here and not on the new-moon pin.
+        let w = world_state(unix_utc(2026, 1, 3, 6, 0, 0), &Observer::new(41.88, -87.63));
+        assert!(w.sun_elevation_deg < -6.0, "sun {}", w.sun_elevation_deg);
+        assert!(
+            w.moon_elevation_deg > 20.0,
+            "moon el {} az {}",
+            w.moon_elevation_deg,
+            w.moon_azimuth_deg
+        );
+        assert!(w.moon_illuminated > 0.95, "k {}", w.moon_illuminated);
+        assert!(w.moon_color.length() > 0.2, "key {}", w.moon_color.length());
+        // Night zenith with no moon wash is (0.004, 0.008, 0.020).
+        assert!(w.sky_zenith.x > 0.01, "zenith {:?}", w.sky_zenith);
+        assert!(w.sky_horizon.length() > 0.04, "horizon {:?}", w.sky_horizon);
+    }
 }

@@ -174,7 +174,8 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
     // The direct terms keep their own accounting (shadow map for
     // the sun, none for the moon); this term is the fold term.
     let amb = mix(u.amb_ground.rgb, u.amb_sky.rgb, n.y * 0.5 + 0.5) * in.ao;
-    // The moon: faint, hard, shadowless key light.
+    // The moon: faint, hard, shadowless key light, already scaled by
+    // the illuminated fraction in the reality layer.
     let moon_diff = max(dot(n, u.moon_dir.xyz), 0.0);
     var col = albedo * (u.sun_color.rgb * wrap * shadow * 0.82 + u.moon_color.rgb * moon_diff + amb);
 

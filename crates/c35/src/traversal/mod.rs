@@ -150,11 +150,9 @@ impl TravSim {
     /// the timer; otherwise it counts down. Called once per
     /// tick on every path that can land.
     fn settle_land_tick(&mut self) {
-        let landed = self
-            .events
-            .events
-            .last()
-            .map_or(false, |e| e.tick == self.tick && e.kind == StimulusKind::Landing);
+        let landed = self.events.events.last().is_some_and(|e| {
+            e.tick == self.tick && e.kind == StimulusKind::Landing
+        });
         if landed {
             self.land_ticks = 30;
         } else if self.land_ticks > 0 {

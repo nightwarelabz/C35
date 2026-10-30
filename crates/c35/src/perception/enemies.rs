@@ -393,6 +393,12 @@ pub struct NeighbourBrain {
     pub tick: u64,
 }
 
+impl Default for NeighbourBrain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NeighbourBrain {
     pub fn new() -> NeighbourBrain {
         NeighbourBrain {

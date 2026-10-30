@@ -23,7 +23,7 @@ struct Uniforms {
     season: vec4<f32>,      // x: cold · y: autumn · z: spring · w: snow line (world y)
     water_p: vec4<f32>,     // x: ice · y: wave scale · z: star intensity · w: daylight
     misc: vec4<f32>,        // x: time s · y: shadow strength · z: render scale · w: aspect
-    quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed)
+    quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed) · w: moon illuminated fraction (0 new, 1 full)
     present: vec4<f32>,     // M6: x: PS1.5 mode (0 classic / 1 PS1.5) · y: PS1.5 fog density multiplier · z: palette steps · w: unused
 }
 
@@ -55,11 +55,24 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     col += u.sun_glow.rgb * pow(sun_amt, 6.0) * 0.35;   // broad glow
     col += u.sun_glow.rgb * pow(sun_amt, 150.0) * 0.7;  // inner glow
     col += u.sun_glow.rgb * smoothstep(0.99955, 0.99978, sun_amt) * u.sun_glow.w; // disc
-    // The moon: a pale disc + halo, mirrored from the sun by the reality
-    // layer (phase is not modelled — it is a light, not an ephemeris).
+    // The moon: a pale disc + halo. Direction, phase and brightness
+    // come from the reality layer (Meeus ch. 47/48 on the same clock
+    // as the sun). moon_color is already scaled by the illuminated
+    // fraction, so the halo and the sea that reflects this sky dim
+    // with the phase. The disc's surface brightness is not: the
+    // terminator (quality.w = k) hides the dark limb, and a new moon
+    // draws nothing. No extra sample, no extra pass.
     let moon_amt = max(dot(dir, u.moon_dir.xyz), 0.0);
     col += u.moon_color.rgb * pow(moon_amt, 240.0) * 0.5;
-    col += vec3<f32>(0.72, 0.78, 0.90) * smoothstep(0.99988, 0.99996, moon_amt) * u.moon_color.w;
+    let axis = u.sun_dir.xyz - u.moon_dir.xyz * dot(u.sun_dir.xyz, u.moon_dir.xyz);
+    let axis_l = max(length(axis), 1e-4);
+    let perp = dir - u.moon_dir.xyz * moon_amt;
+    // +x faces the sun. Disc angular half-width matches the smoothstep
+    // edge below. phase is +1 at full, −1 at new.
+    let x = dot(perp, axis) / (axis_l * 0.0126);
+    let phase = u.quality.w * 2.0 - 1.0;
+    let lit = smoothstep(-0.04, 0.04, x + phase);
+    col += vec3<f32>(0.72, 0.78, 0.90) * smoothstep(0.99988, 0.99996, moon_amt) * u.moon_color.w * lit;
     // M6 (PS1.5 mode only): the banner's sodium shore — a warm band of
     // far light riding the horizon, lumpy with lamp clusters. The
     // reference frame is a lit dockyard city; this vista is an island,

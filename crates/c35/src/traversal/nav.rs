@@ -118,7 +118,6 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
     // Region growing: 4-connectivity, joined only where the
     // height step is walkable — ledges split regions.
     let mut regions = 0usize;
-    let mut grid = grid;
     for j in 0..nz {
         for i in 0..nx {
             let idx = j * nx + i;
@@ -317,7 +316,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
                     nc.ground,
                     min.z + (nj as f32 + 0.5) * NAV_CELL,
                 );
-                if dh >= 0.4 && dh <= 1.5 {
+                if (0.4..=1.5).contains(&dh) {
                     // Mantle up (one-way), plus the reverse drop.
                     links.push(OffMeshLink {
                         from: p0,
@@ -383,7 +382,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
             let key = (polys[a].region, polys[b].region);
             let better = best_grapple
                 .get(&key)
-                .map_or(true, |old| link.price < old.price);
+                .is_none_or(|old| link.price < old.price);
             if better {
                 best_grapple.insert(key, link);
             }
@@ -457,7 +456,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
             for i in 0..nx {
                 match wall_at[j * nx + i] {
                     Some((_, n, _)) => {
-                        if run_normal.map_or(true, |rn| (rn - n).length() < 0.1) {
+                        if run_normal.is_none_or(|rn| (rn - n).length() < 0.1) {
                             if run_start.is_none() {
                                 run_start = Some(i);
                                 run_normal = Some(n);
@@ -539,8 +538,8 @@ pub fn route(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Route> {
     let start = nearest_poly(mesh, from)?;
     let goal = nearest_poly(mesh, to)?;
     // Edges: poly adjacency + links attached to their nearest polys.
-    let mut edges: HashMap<usize, Vec<(usize, f32, LinkKind, Vec3, Vec3, f32)>> =
-        HashMap::new();
+    type Edge = (usize, f32, LinkKind, Vec3, Vec3, f32);
+    let mut edges: HashMap<usize, Vec<Edge>> = HashMap::new();
     for poly in &mesh.polys {
         for (n, cost) in &poly.neighbors {
             edges
@@ -575,14 +574,17 @@ pub fn route(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Route> {
         id: usize,
     }
     impl Eq for Node {}
-    impl PartialOrd for Node {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            other.f.partial_cmp(&self.f)
-        }
-    }
     impl Ord for Node {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.partial_cmp(other).unwrap()
+            // Reversed, so BinaryHeap is a min-heap on finite costs.
+            // total_cmp matches partial_cmp for every finite f and does
+            // not panic when a cost is NaN.
+            other.f.total_cmp(&self.f)
+        }
+    }
+    impl PartialOrd for Node {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
         }
     }
     let heuristic = |_id: usize| 0.0f32;

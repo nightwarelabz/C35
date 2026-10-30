@@ -5,6 +5,8 @@
 // M2: the reality layer calms and freezes it — wave motion scales down as
 // cold deepens, ice patches sheet over in deep winter with a hard pale
 // glint, and at night the glitter path runs off the moon instead.
+// The moon colour is already scaled by the illuminated fraction, so a
+// new moon leaves the sea dark and a full moon lays the glitter path.
 // M3: the governor sheds wave octaves (quality.y), and the frozen sheet
 // roughens its own normals so the ice glint sparkles instead of striping.
 
@@ -123,7 +125,16 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     // factor grows — pale, hard-glinting, nearly matte between patches.
     if (ice > 0.01) {
         let ice_patch = smoothstep(0.78 - ice * 0.45, 0.92 - ice * 0.35, vnoise(wpg.xz * 0.045 + 3.7));
-        let ice_col = vec3<f32>(0.62, 0.70, 0.78) * (0.35 + 0.65 * u.water_p.w)
+        // Night floor used to be a fixed 0.35, because the moon was
+        // always on. It now follows the moon key, which the reality
+        // layer has already scaled by the illuminated fraction: a full
+        // moon (key length 0.339) restores 0.35, a new moon leaves a
+        // dark sheet. Daylight still mixes to 1, so a day frame does
+        // not move.
+        let moon_key = clamp(length(u.moon_color.rgb) / 0.339, 0.0, 1.0);
+        let night_floor = mix(0.05, 0.35, moon_key);
+        let ice_factor = mix(night_floor, 1.0, u.water_p.w);
+        let ice_col = vec3<f32>(0.62, 0.70, 0.78) * ice_factor
             + u.amb_sky.rgb * 0.5;
         var iced = ice_col;
         // The sheet's glint is noise-broken too: no clean band survives.

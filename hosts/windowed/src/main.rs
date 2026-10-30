@@ -325,7 +325,7 @@ impl App {
                     self.frame_count += 1;
 
                     // The ledger rides the title bar.
-                    if self.frame_count % 30 == 0 {
+                    if self.frame_count.is_multiple_of(30) {
                         let (shadow_ms, scene_ms) = renderer.drain_gpu_samples();
                         let gpu = if scene_ms.is_empty() {
                             "gpu n/a".to_string()
@@ -436,6 +436,10 @@ impl ApplicationHandler for App {
         println!(
             "sun              : elevation {:+.2} deg, azimuth {:.1} deg, day length {:.1} h",
             world.sun_elevation_deg, world.sun_azimuth_deg, world.day_length_hours
+        );
+        println!(
+            "moon             : elevation {:+.2} deg, azimuth {:.1} deg, illuminated {:.3}",
+            world.moon_elevation_deg, world.moon_azimuth_deg, world.moon_illuminated
         );
         println!(
             "season           : cold {:.2} / autumn {:.2} / spring {:.2} / summer {:.2}",

@@ -120,6 +120,12 @@ pub struct Grapple {
     pub waiting_release: bool,
 }
 
+impl Default for Grapple {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Grapple {
     pub fn new() -> Grapple {
         Grapple {
@@ -194,6 +200,7 @@ impl Grapple {
     /// State transitions defer through `next`: the match borrows
     /// the owned state, so a transition is staged and applied
     /// after the match, never mid-borrow.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         dt: f32,
@@ -343,8 +350,8 @@ impl Grapple {
                             rope[i] += d * diff * w0;
                             rope[i + 1] -= d * diff * w1;
                         }
-                        for i in 1..ROPE_POINTS - 1 {
-                            let p = rope[i];
+                        for slot in rope.iter_mut().take(ROPE_POINTS - 1).skip(1) {
+                            let p = *slot;
                             let mut pushed = p;
                             for b in &world.boxes {
                                 let cp = b.closest(p);
@@ -362,7 +369,7 @@ impl Grapple {
                             if pushed != p {
                                 new_contact = Some(pushed);
                             }
-                            rope[i] = pushed;
+                            *slot = pushed;
                         }
                         rope[0] = anchor_pos;
                         rope[ROPE_POINTS - 1] = attach;

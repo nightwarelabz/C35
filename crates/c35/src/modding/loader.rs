@@ -245,7 +245,7 @@ fn version_satisfies(range: &str, current: Version) -> Result<bool, String> {
     if range.trim().is_empty() {
         return Err("engine range is empty".to_string());
     }
-    for token in range.split(|c| c == ' ' || c == ',').filter(|t| !t.is_empty()) {
+    for token in range.split([' ', ',']).filter(|t| !t.is_empty()) {
         let (op, ver) = if let Some(rest) = token.strip_prefix(">=") {
             (">=", rest)
         } else if let Some(rest) = token.strip_prefix("<=") {
@@ -798,12 +798,14 @@ pub struct ReplacementEntry {
     pub variant: ParamValues,
 }
 
+type PlacementFile = Result<(Vec<PlacementEntry>, Vec<ReplacementEntry>, Vec<String>), String>;
+
 fn parse_placements_file(
     file: &str,
     v: &Value,
     shipped: &Registry,
     own_props: &BTreeMap<String, PropDef>,
-) -> Result<(Vec<PlacementEntry>, Vec<ReplacementEntry>, Vec<String>), String> {
+) -> PlacementFile {
     let mut warnings = Vec::new();
     check_fields(file, v, &["placements", "replacements"], "placements file")?;
     let mut placements = Vec::new();

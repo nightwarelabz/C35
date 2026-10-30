@@ -53,6 +53,7 @@ fn course_world(wet: f32) -> StaticWorld {
     w
 }
 
+#[allow(clippy::too_many_arguments)]
 fn input(
     wish: Vec3,
     facing: Vec3,

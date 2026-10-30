@@ -144,9 +144,7 @@ fn local_polys(part: &Part) -> Vec<Poly> {
             }
             // Caps as fans.
             let mut top: Poly = vec![[0.0, hy, 0.0]];
-            for i in 0..n {
-                top.push(rim_top[i]);
-            }
+            top.extend(rim_top.iter().copied());
             let mut bot: Poly = vec![[0.0, -hy, 0.0]];
             for i in (0..n).rev() {
                 bot.push(rim_bot[i]);

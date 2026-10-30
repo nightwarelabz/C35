@@ -68,9 +68,17 @@ The vista obeys the computed state end to end:
   solar position; a real 2048² shadow map (one cascade) makes the terrain
   shadow itself, and the pass is skipped outright when the sun is down.
 - **Sky** — the gradient, horizon warmth and fog tint follow the sun's
-  elevation; at night the stars come out and a moon — a faint key light
-  mirrored from the sun (its phase is not modelled; it is a light, not an
-  ephemeris) — takes over.
+  elevation; at night the stars come out and the moon takes over. The
+  moon is no longer a light mirrored from the sun. Its place and its
+  phase come from the same UTC instant, through a low-precision lunar
+  ephemeris (Meeus, *Astronomical Algorithms*, ch. 47 for the place and
+  ch. 48 for the illuminated fraction). That fraction scales the sky
+  wash, the sea that reflects the sky, and the key light — a new moon
+  adds nothing, so a new-moon night stays dark enough for the PS1.5
+  sodium shore to carry the frame. It is the uniforms the sky and water
+  shaders already read: the ledger gains no pass and no draw. Every
+  reality reading prints elevation, azimuth, and illuminated fraction
+  so the claim can be checked against an almanac.
 - **Land** — the snow line descends as cold deepens until January puts snow
   on the beach; autumn ambers the foliage band; spring brightens the green.
 - **Water** — cold pales the sea; deep winter sheets it with ice: pale,
@@ -85,15 +93,16 @@ The vista obeys the computed state end to end:
 - **Web host** reads the **system clock** via `Date` and the position via
   the **Geolocation API** when the visitor grants it.
 - **When location is unknown, the engine says so.** The ledger of every
-  run prints the clock source and the latitude source actually used; with
-  no latitude the engine runs at a stated equator fallback — never a
-  silent pretence. The web page's readout says the same when geolocation
-  is denied, and names the fallback in force.
+  run prints the clock source, the latitude source actually used, and the
+  moon (elevation, azimuth, illuminated fraction); with no latitude the
+  engine runs at a stated equator fallback — never a silent pretence.
+  The web page's readout says the same when geolocation is denied, and
+  names the fallback in force.
 
 **Privacy:** location is used locally only. Coarse latitude is all the
-engine consumes for its seasons (longitude only sets solar time), and
-nothing is transmitted anywhere — there is no server component to send it
-to.
+engine consumes for its seasons (longitude sets solar time and the moon's
+hour angle), and nothing is transmitted anywhere — there is no server
+component to send it to.
 
 **The no-controls law:** the shipped hosts carry **no time-of-day or
 season controls** — no sliders, no keys, no query parameters. The engine
@@ -400,6 +409,17 @@ sun              : elevation +6.15 deg, azimuth 125.9 deg, day length 9.3 h
 season           : cold 1.00 / autumn 0.00 / spring 0.00 / summer 0.00
 land & water     : snow line -3.0, water ice 1.00, wave scale 0.21
 ```
+
+The reality reading now continues with the moon, on the same clock:
+
+```
+moon             : elevation +.. deg, azimuth .. deg, illuminated 0.000
+```
+
+Illuminated fraction is the geocentric disk fraction (Meeus ch. 48). It
+is an audit line, not a cost: the moon writes uniforms the sky and sea
+already sample, and the pass count and the draw count do not move. The
+block above is the M2 capture and predates that line.
 
 (Every number above is a software-renderer number — see Status. On real
 hardware the same ledger is the first thing to look at.)

@@ -95,6 +95,12 @@ pub struct Type1Governor {
     pub servo_ticks: u64,
 }
 
+impl Default for Type1Governor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Type1Governor {
     pub fn new() -> Type1Governor {
         Type1Governor {
@@ -286,6 +292,12 @@ pub struct Type2Governor {
     /// Recovery seconds owed after an overshoot, in
     /// ticks — the window the player earned.
     pub recovery_owed: u64,
+}
+
+impl Default for Type2Governor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Type2Governor {

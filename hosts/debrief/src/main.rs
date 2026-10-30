@@ -144,6 +144,10 @@ pub(crate) fn print_reality(r: &Reality) {
         w.sun_elevation_deg, w.sun_azimuth_deg, w.day_length_hours
     );
     println!(
+        "moon             : elevation {:+.2} deg, azimuth {:.1} deg, illuminated {:.3}",
+        w.moon_elevation_deg, w.moon_azimuth_deg, w.moon_illuminated
+    );
+    println!(
         "season           : cold {:.2} / autumn {:.2} / spring {:.2} / summer {:.2}",
         w.cold, w.autumn, w.spring, w.summer
     );

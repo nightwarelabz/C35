@@ -3,7 +3,9 @@
 //! A cost-accounted procedural graphics engine. M1: a wgpu renderer core
 //! and one deterministic procedural vista. M2: the vista obeys the
 //! **reality layer** ([`world`]) — a real solar model drives sun, sky,
-//! fog, seasons and ice from the clock and the observer's latitude — plus
+//! fog, seasons and ice from the clock and the observer's latitude, and
+//! the same instant drives a low-precision lunar ephemeris (phase and
+//! place; the illuminated fraction scales the sky and the sea) — plus
 //! a real directional shadow map, a fragment terrain detail pass, and
 //! temporal AA where the backend can carry it (FXAA on the WebGL2
 //! fallback path; the ledger names which ran).
@@ -2914,7 +2916,10 @@ impl Renderer {
                 } else {
                     0.0
                 },
-                0.0,
+                // Illuminated fraction for the sky disc's terminator.
+                // Packed into an existing uniform slot: the moon adds
+                // no buffer, no pass, and no draw.
+                world.moon_illuminated,
             ],
             // M6 presentation: x mode (0 classic / 1 PS1.5) · y fog
             // look multiplier · z palette steps. In classic mode x is

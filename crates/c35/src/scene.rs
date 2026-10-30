@@ -153,6 +153,10 @@ fn height_base(x: f32, z: f32) -> f32 {
     // Island body: radial falloff, carved away toward the south-east.
     let fall = smoothstep(1.10, 0.45, r / (TERRAIN_SIZE * 0.5));
     let dir = if r > 0.001 { p / r } else { Vec2::ZERO };
+    // Four decimals, not `FRAC_1_SQRT_2`: this direction is part of the
+    // pinned landform. Substituting the longer constant moves every
+    // height sample.
+    #[allow(clippy::approx_constant)]
     let se_dot = dir.dot(Vec2::new(0.7071, 0.7071)); // +1 toward SE
     let bay = smoothstep(0.95, 0.05, se_dot); // 1 toward NW, 0 toward SE
     let land = (fall * (0.22 + 0.78 * bay)).clamp(0.0, 1.0);
@@ -209,6 +213,12 @@ pub struct HeightGrid {
     heights: Vec<f32>, // TERRAIN_GRID × TERRAIN_GRID, row-major (j = z)
     step: f32,
     half: f32,
+}
+
+impl Default for HeightGrid {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HeightGrid {

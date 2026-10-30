@@ -277,7 +277,7 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
         let mut x = r.0 as i32 - off as i32;
         while x < (r.0 + r.2) as i32 {
             let tone = 0.82 + (rng.next() % 36) as f32 / 100.0;
-            let c = if rng.next() % 7 == 0 { dark } else { base };
+            let c = if rng.next().is_multiple_of(7) { dark } else { base };
             let c = [
                 (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
                 (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
@@ -657,7 +657,7 @@ pub fn generate_city_atlas() -> Vec<u8> {
             let by = r.1 + rng.range(r.3.saturating_sub(16).max(1));
             let bw = 8 + rng.range(16);
             let bh = 8 + rng.range(16);
-            let tone = if rng.next() % 2 == 0 { 0.88 } else { 1.10 };
+            let tone = if rng.next().is_multiple_of(2) { 0.88 } else { 1.10 };
             for y in by..(by + bh).min(r.1 + r.3) {
                 for x in bx..(bx + bw).min(r.0 + r.2) {
                     let c = a.get(x, y);
@@ -679,7 +679,7 @@ pub fn generate_city_atlas() -> Vec<u8> {
             let by = r.1 + rng.range(r.3.saturating_sub(14).max(1));
             let bw = 8 + rng.range(14);
             let bh = 6 + rng.range(12);
-            let tone = if rng.next() % 2 == 0 { 0.82 } else { 1.14 };
+            let tone = if rng.next().is_multiple_of(2) { 0.82 } else { 1.14 };
             for y in by..(by + bh).min(r.1 + r.3) {
                 for x in bx..(bx + bw).min(r.0 + r.2) {
                     let c = a.get(x, y);

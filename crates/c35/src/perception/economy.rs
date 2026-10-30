@@ -38,6 +38,12 @@ pub struct AlertBudget {
     pub level: f32,
 }
 
+impl Default for AlertBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AlertBudget {
     /// Patrol density unlocks here: more boots, tighter
     /// routes. The first thing a risen city buys.
