@@ -54,6 +54,7 @@ pub mod operator;
 pub mod perception;
 pub mod props;
 pub mod scene;
+pub mod sound;
 pub mod traversal;
 pub mod vista;
 pub mod world;
