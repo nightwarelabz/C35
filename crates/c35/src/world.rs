@@ -296,10 +296,14 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
 
     // Sky gradient keyframes by elevation, blended — day / golden / ember /
     // night. (M1's golden hour is the el≈9.5° keyframe family.)
+    // Graphics push 2: the day keyframes run deeper and cooler —
+    // a blue with depth at the zenith and a horizon that stays blue
+    // instead of washing to grey. Daylight is the lie detector;
+    // the old pale ramp was a night leftover and read as haze.
     let (day_zen, day_mid, day_hor) = (
-        Vec3::new(0.10, 0.28, 0.58),
-        Vec3::new(0.38, 0.53, 0.76),
-        Vec3::new(0.72, 0.76, 0.80),
+        Vec3::new(0.065, 0.235, 0.60),
+        Vec3::new(0.315, 0.495, 0.775),
+        Vec3::new(0.60, 0.695, 0.825),
     );
     let (gold_zen, gold_mid, gold_hor) = (
         Vec3::new(0.075, 0.205, 0.45),
@@ -335,19 +339,30 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
     hor *= 1.0 + (pale.z - 1.0) * cold * daylight;
 
     // Hemisphere ambient: strong in day, ember-lit at dusk, moon-dim at night.
+    // Graphics push 2: the night endpoints lift a touch and cool —
+    // shadow masses stay deep blue-grey, never void black, per the
+    // banner's temperature.
     let amb_day_sky = Vec3::new(0.30, 0.375, 0.52) * (0.45 + 0.55 * daylight);
-    let amb_sky = mix3(Vec3::new(0.020, 0.028, 0.052), amb_day_sky, daylight)
+    let amb_sky = mix3(Vec3::new(0.027, 0.037, 0.068), amb_day_sky, daylight)
         + Vec3::new(0.10, 0.045, 0.015) * dusk_glow;
     let amb_ground = mix3(
-        Vec3::new(0.010, 0.010, 0.014),
+        Vec3::new(0.013, 0.015, 0.025),
         Vec3::new(0.145, 0.115, 0.095) * (0.4 + 0.6 * daylight),
         daylight,
     );
 
     // Fog: the horizon colour, away from the sun; a touch denser in cold
-    // haze, a touch thinner at night.
-    let fog_color = hor * 0.96 + Vec3::new(0.02, 0.015, 0.01);
-    let fog_density = 0.00135 * (1.0 + 0.25 * cold) * (1.0 - 0.25 * (1.0 - daylight));
+    // haze. Graphics push 2: the tint cools with daylight (day haze is
+    // air, not ember soup) and the density thins hard in full day —
+    // at noon the old density ate the mid-distance whole. The night
+    // keeps its full weight: the dark stage needs its depth.
+    let fog_tint = mix3(
+        Vec3::new(0.02, 0.015, 0.01),
+        Vec3::new(0.004, 0.010, 0.026),
+        daylight,
+    );
+    let fog_color = hor * 0.96 + fog_tint;
+    let fog_density = 0.00135 * (1.0 + 0.25 * cold) * (1.0 - 0.48 * daylight);
 
     // Moon: faint key light mirrored from the sun (phase not modelled).
     let moon_in = smoothstep(-1.0, -6.0, el);
@@ -359,7 +374,10 @@ pub fn world_state(unix_seconds: f64, observer: &Observer) -> WorldState {
         -moon_el.to_radians().cos() * moon_az.cos(),
     )
     .normalize();
-    let moon_color = Vec3::new(0.42, 0.52, 0.74) * (0.34 * moon_in);
+    // Graphics push 2: the moon is the night's key light, not a
+    // whisper — stronger and cooler, so figures and streets model
+    // against the sodium practicals in blue.
+    let moon_color = Vec3::new(0.40, 0.52, 0.80) * (0.46 * moon_in);
     let moon_disc = 1.5 * moon_in;
 
     let star_intensity = smoothstep(-8.0, -16.0, el);
