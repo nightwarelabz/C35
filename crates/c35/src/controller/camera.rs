@@ -1,129 +1,167 @@
-//! The camera the controller hands the host each frame,
-//! and the camera law's constants.
+//! The camera each rig hands the host per tick, and
+//! the camera law's constants.
 //!
-//! [`CameraState`] is deliberately more than a view
-//! matrix's ingredients: it carries pitch, posture and
-//! aim state because the engine's viewmodel API
-//! (`operator::build_viewmodel`) takes no pitch today —
-//! this struct is the seam the DeBrief host pitches the
-//! viewmodel from. The host reads `eye`, `yaw_deg`,
-//! `fov_deg` and `roll` for its scene camera, and
-//! `pitch` / `posture` / `aiming` for the viewmodel and
-//! body-awareness placement, all off the one struct, so
-//! the hands can never disagree with the eyes.
+//! One [`CameraState`] serves both rigs: position,
+//! target, yaw/pitch/roll and the eased FOV are all a
+//! host needs to build its scene camera (or read
+//! [`CameraState::pose`]), and the rig-specific fields
+//! (bob offset, boom distances) say how the position
+//! was arrived at, so a host can log or blend honestly.
 
-use crate::controller::input::Posture;
-use crate::traversal::BodyMode;
 use glam::Vec3;
 
-/// Base vertical FOV (degrees): the standing, unhurried
-/// register — wide enough for a street, narrow enough
-/// that a doorway still reads as a decision.
-pub const BASE_FOV_DEG: f32 = 75.0;
-/// Aiming FOV (degrees): the narrowed register. A zoom
-/// by framing, not by lens trickery — the aim pose and
-/// this number are the whole of it.
-pub const AIM_FOV_DEG: f32 = 55.0;
-/// Sprint FOV (degrees): a few degrees of speed made
-/// visible at the frame's edge.
-pub const SPRINT_FOV_DEG: f32 = 82.0;
-/// Grapple-swing FOV (degrees): the widest register —
-/// the swing is the fastest honest motion the body has.
-pub const SWING_FOV_DEG: f32 = 86.0;
+/// First-person base vertical FOV (degrees): the
+/// engine's standing register (the vista hero pose's
+/// 55°), wide enough to read a doorway, a checkpoint
+/// queue and a lamp pool's edge without turning.
+pub const FP_FOV_BASE_DEG: f32 = 55.0;
+/// First-person aim FOV (degrees): narrowed slightly —
+/// the visor's focus, not a scope.
+pub const FP_FOV_AIM_DEG: f32 = 50.0;
+/// First-person FOV ceiling (degrees): sprint and the
+/// grapple swing widen toward this and never past it.
+/// The swing's widening is capped AT the sprint
+/// widening, per the first-person note.
+pub const FP_FOV_MAX_DEG: f32 = 60.0;
+/// Third-person base vertical FOV (degrees): the house
+/// follow rig's 50°.
+pub const TP_FOV_BASE_DEG: f32 = 50.0;
+/// Third-person aim FOV (degrees).
+pub const TP_FOV_AIM_DEG: f32 = 45.0;
+/// Third-person FOV ceiling (degrees).
+pub const TP_FOV_MAX_DEG: f32 = 55.0;
 /// FOV easing rate (1/s), exponential: frame-rate
-/// independent, most of the travel inside ~0.3 s, and
-/// never an overshoot.
+/// independent, most of the travel inside ~0.3 s, no
+/// overshoot, and never a snap — on latch, on release,
+/// on toggle, anywhere.
 pub const FOV_EASE_RATE: f32 = 8.0;
 
-/// Pitch clamp (degrees either way from level). Past
-/// this the neck — and the body-awareness figure under
-/// it — stops being honest.
+/// Pitch clamp (degrees either way from level).
 pub const PITCH_LIMIT_DEG: f32 = 85.0;
 
-/// Lateral eye offset at full lean (m): a head and a
-/// shoulder's worth around a corner, no more — lean is
-/// for seeing, not for teleporting the eye through
-/// walls.
+/// Lateral eye offset at full lean (m) in first
+/// person: a head and a shoulder's worth around a
+/// corner, no more. Lean translates the eye; it never
+/// rolls the world.
 pub const LEAN_OFFSET: f32 = 0.35;
-/// Camera roll at full lean (degrees).
-pub const LEAN_ROLL_DEG: f32 = 6.0;
-/// Camera roll while wall-running (degrees), toward the
-/// wall. Traversal admits walls leaning up to
-/// `wallrun::MAX_WALL_LEAN_DEG` (25°) but exposes no
-/// camera roll of its own; this declared value sits
-/// inside that envelope.
-pub const WALLRUN_ROLL_DEG: f32 = 12.0;
-/// Roll easing rate (1/s), exponential — a wall-run
-/// entry tilts in over ~0.2 s instead of snapping.
-pub const ROLL_EASE_RATE: f32 = 10.0;
 
-/// Head-bob peak vertical amplitude (m) at full walk.
-/// Subtle on purpose: the bob is a felt rhythm, never a
-/// visible bounce.
-pub const BOB_AMPLITUDE: f32 = 0.035;
+/// Head-bob peak vertical amplitude (m) at full sprint
+/// speed; the offset scales down with speed from
+/// there. Subtle on purpose: a felt rhythm, never a
+/// visible bounce. Positional only — bob never pitches
+/// or rolls the frame.
+pub const BOB_AMPLITUDE: f32 = 0.03;
 /// Ground distance (m) per full bob cycle: one cycle
 /// per two steps at a walk stride.
 pub const BOB_STRIDE: f32 = 1.9;
-/// Below this ground speed (m/s) the bob is exactly
-/// zero — the stealth threshold. Creeping must not
-/// announce itself in the camera.
-pub const BOB_STEALTH_SPEED: f32 = 1.6;
 /// Bob weight attack rate (1/s): when the bob becomes
 /// legal it fades in at this rate instead of popping.
 /// (While illegal it is exactly 0.0 — see player.rs.)
 pub const BOB_WEIGHT_RATE: f32 = 6.0;
+/// Landing dip: deepest dip (m), and dip per unit of
+/// impact speed (m per m/s). One eased downward
+/// translation on landing, scaled by fall speed — a
+/// dip, never a bounce, never a shake.
+pub const DIP_MAX: f32 = 0.10;
+pub const DIP_PER_IMPACT: f32 = 0.02;
+/// Landing dip duration (s): recovered inside half a
+/// second, well under the note's one-second bound.
+pub const DIP_DURATION_S: f32 = 0.45;
+/// Idle breath: the faintest standing-still eye
+/// translation (m), on a slow period (s). It stops
+/// entirely when aiming.
+pub const BREATH_AMPLITUDE: f32 = 0.004;
+pub const BREATH_PERIOD_S: f32 = 4.0;
+/// Ticks of stillness that make a beat (0.25 s at the
+/// fixed 240 Hz step): after this long without moving,
+/// the gait bob is over and only the idle breath
+/// remains.
+pub const STILL_BEAT_TICKS: u32 = 60;
 
-/// One frame of camera truth, returned by
-/// `PlayerController::update`.
+/// Camera roll while wall-running (degrees), toward
+/// the wall: small and constant for the run's length.
+pub const WALLRUN_ROLL_DEG: f32 = 12.0;
+/// Swing bank: roll per (m/s) of lateral swing
+/// velocity (degrees), capped at SWING_ROLL_CAP_DEG.
+/// The horizon stays level in a swing except for this
+/// capped bank.
+pub const SWING_ROLL_PER_SPEED_DEG: f32 = 1.5;
+pub const SWING_ROLL_CAP_DEG: f32 = 8.0;
+/// Roll easing rate (1/s), exponential.
+pub const ROLL_EASE_RATE: f32 = 10.0;
+
+/// Third-person boom: the closest the collision
+/// pull-in may bring the camera to the focus (m), and
+/// the clearance kept in front of a blocking surface
+/// (m) — the camera pulls in BEFORE the wall, never
+/// clips through it.
+pub const TP_MIN_BOOM: f32 = 0.35;
+pub const TP_COLLISION_MARGIN: f32 = 0.25;
+/// Boom length / shoulder easing rate (1/s): the boom
+/// eases out to its wished length and tightens for
+/// aim at this rate; collision pull-in is NOT eased
+/// (it applies the same tick the geometry demands it).
+pub const TP_BOOM_EASE_RATE: f32 = 10.0;
+
+/// One tick of camera truth, returned inside
+/// [`crate::controller::ControllerFrame`].
 #[derive(Copy, Clone, Debug)]
 pub struct CameraState {
-    /// World eye position: feet + posture eye height,
-    /// plus the lean's lateral offset, plus the bob.
-    pub eye: Vec3,
-    /// The simulated body's feet position (world). The
-    /// viewmodel placement contract keys off this:
-    /// spot = feet XZ, ground_y = eye.y - eye_height.
-    pub feet: Vec3,
-    /// Camera yaw (radians; + turns right, wrapped to
-    /// -PI..=PI). Facing is (-sin yaw, 0, -cos yaw).
+    /// World camera position. First person: the eye
+    /// (posture height + lean + bob folded in). Third
+    /// person: the boom end, after collision pull-in.
+    pub position: Vec3,
+    /// World point the camera looks at: position +
+    /// look direction × 10 m.
+    pub target: Vec3,
+    /// The point the rig is anchored to. First person:
+    /// the eye itself. Third person: the boom's focus
+    /// (feet + `tp_height`), before pull-in.
+    pub focus: Vec3,
+    /// Camera yaw (radians; facing =
+    /// (sin yaw, 0, cos yaw), the locomotion yaw
+    /// convention).
     pub yaw: f32,
-    /// Camera yaw in degrees — the exact value the
-    /// viewmodel contract (`build_viewmodel`) takes.
-    pub yaw_deg: f32,
     /// Camera pitch (radians, + looks up, clamped to
-    /// +/- PITCH_LIMIT_DEG). Exposed for the viewmodel
-    /// seam: the host pitches the hands by this.
+    /// ±PITCH_LIMIT_DEG).
     pub pitch: f32,
-    /// Camera roll (radians; + tips the top of frame to
-    /// the player's right). From lean and wall-run only;
-    /// the controller invents no other roll sources.
+    /// Camera roll (radians). Sources are only the
+    /// wall-run lean and the capped swing bank, in
+    /// first person; third person holds the horizon
+    /// (0.0). Lean never rolls the world.
     pub roll: f32,
     /// Current vertical FOV (degrees), eased.
     pub fov_deg: f32,
-    /// Current posture (the target state; heights below
-    /// may still be travelling toward it mid-transition).
-    pub posture: Posture,
-    /// Current eased eye height above the feet (m).
-    pub eye_height: f32,
-    /// Current eased capsule height (m) — the posture
-    /// contract value (see mod.rs on the fixed sim
-    /// capsule).
-    pub capsule_height: f32,
-    /// Horizontal ground speed (m/s), as simulated.
-    pub speed: f32,
-    /// The traversal mode this frame (Ground / Air /
-    /// WallRun / Grapple / Mantle), mirrored so a host
-    /// never reaches into the sim for it.
-    pub mode: BodyMode,
-    /// Aim held this frame (echoed for the viewmodel
-    /// pose pick).
-    pub aiming: bool,
-    /// On the ground, as simulated.
-    pub grounded: bool,
-    /// The vertical bob offset folded into `eye` this
-    /// frame (m). Exactly 0.0 whenever the bob is
-    /// disabled by the stealth law.
-    pub bob_offset: f32,
-    /// Lean amount applied this frame (-1..=1, echoed).
-    pub lean: f32,
+    /// The positional eye offset folded into
+    /// `position` this tick (gait bob + landing dip +
+    /// idle breath), first person only. Exactly zero
+    /// in third person, and its gait component is
+    /// exactly 0.0 whenever the stealth law silences
+    /// the bob.
+    pub bob_offset: Vec3,
+    /// Third person: the boom length actually used,
+    /// after easing and collision pull-in (m). First
+    /// person: 0.0.
+    pub boom_distance: f32,
+    /// Third person: the boom length the rig wants
+    /// (config, or the aim-tightened config). First
+    /// person: 0.0.
+    pub boom_requested: f32,
+    /// Third person: true when geometry pulled the
+    /// boom in short of `boom_requested` this tick.
+    pub boom_blocked: bool,
+}
+
+impl CameraState {
+    /// The engine scene camera for this state. Roll is
+    /// not part of `scene::CameraPose`; a host that
+    /// renders roll applies `roll` around its view axis
+    /// itself.
+    pub fn pose(&self) -> crate::scene::CameraPose {
+        crate::scene::CameraPose {
+            eye: self.position,
+            target: self.target,
+            fov_y_deg: self.fov_deg,
+        }
+    }
 }

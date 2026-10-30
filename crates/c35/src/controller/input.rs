@@ -1,156 +1,194 @@
-//! Per-frame player intent, the posture set, and the
-//! controller's tuning constants.
+//! Per-tick player intent, the speed-tier and posture
+//! vocabulary, and the controller's configuration.
 //!
-//! The host fills one [`PlayerInput`] per rendered frame;
-//! nothing here reads a device, a clock, or a key. Bindings
-//! are the host's business entirely: lean arrives as a
-//! number in -1..=1 (DeBrief's grapple lives on E, and E is
-//! never lean), the grapple arrives as press/held
-//! pass-throughs, and crouch arrives as both a held level
-//! and a pressed edge so the controller can own the toggle
-//! latch (see [`ControllerConfig`]).
+//! The host fills one [`PlayerInput`] per fixed tick;
+//! nothing here reads a device, a clock, or a key.
+//! Bindings are the host's business entirely: the
+//! grapple arrives as press / held / release edges and
+//! levels (DeBrief binds it to E by game law — the
+//! controller takes the edges, never the key), lean
+//! arrives as a number in -1..=1, and look arrives as
+//! per-tick yaw/pitch deltas in radians.
 
-use crate::traversal::physics::{CAPSULE_HALF, CAPSULE_RADIUS};
+use glam::Vec2;
 
-/// Player walk speed (m/s): the unhurried gear — fast
-/// enough to cross a street, slow enough to read it. This
-/// is the PLAYER's table, not the NPC gait table in
-/// `locomotion` (whose walk is a patrol's 1.5 m/s).
-pub const WALK_SPEED: f32 = 3.0;
-/// Player sprint speed (m/s): the locomotion table's
-/// sprint, taken by reference so the player and the
-/// figure's sprint gait can never drift apart.
-pub const SPRINT_SPEED: f32 = crate::locomotion::SPRINT_SPEED;
-/// Crouch-walk speed (m/s). Prone crawls in this band too:
-/// the controller declares three speed gears, not a
-/// tuning table, and prone is the crouch gear lying down.
-pub const CROUCH_WALK_SPEED: f32 = 1.4;
+/// Which camera rig presents the one movement core.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ViewMode {
+    FirstPerson,
+    ThirdPerson,
+}
 
-/// Standing capsule height (m): the traversal capsule's
-/// own total shape, 2 * (half + radius) = 1.80, taken
-/// from the physics constants by reference.
-pub const STAND_CAPSULE: f32 = 2.0 * (CAPSULE_HALF + CAPSULE_RADIUS);
-/// Crouching capsule height (m): head and shoulders under
-/// a desk, a counter, a window line.
-pub const CROUCH_CAPSULE: f32 = 1.20;
-/// Prone capsule height (m): the body flat — a torso's
-/// thickness plus clearance.
-pub const PRONE_CAPSULE: f32 = 0.60;
+/// The wish speed tier. The speeds are the locomotion
+/// gait table's own constants, taken by reference, so
+/// the player's gears and the figure's gaits can never
+/// drift apart.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SpeedTier {
+    Crouch,
+    Walk,
+    Run,
+    Sprint,
+}
 
-/// Standing eye height (m): the engine's viewmodel eye
-/// law, taken by reference — the camera and the viewmodel
-/// placement contract key off the same number.
+impl SpeedTier {
+    /// Target ground speed (m/s) for this tier.
+    pub fn speed(self) -> f32 {
+        match self {
+            SpeedTier::Crouch => crate::locomotion::CROUCH_SPEED,
+            SpeedTier::Walk => crate::locomotion::WALK_SPEED,
+            SpeedTier::Run => crate::locomotion::RUN_SPEED,
+            SpeedTier::Sprint => crate::locomotion::SPRINT_SPEED,
+        }
+    }
+
+    /// The crouch tier IS the crouch posture: it sets
+    /// the posture, the crouch speed, and the traversal
+    /// crouch flag (which stops the grapple reel without
+    /// stopping the swing).
+    pub fn is_crouch(self) -> bool {
+        matches!(self, SpeedTier::Crouch)
+    }
+}
+
+/// Standing eye height (m above the feet): the engine's
+/// viewmodel eye law, taken by reference — the camera
+/// and the viewmodel placement contract key off the
+/// same number.
 pub const STAND_EYE: f32 = crate::operator::VIEWMODEL_EYE_Y;
-/// Crouching eye height (m).
-pub const CROUCH_EYE: f32 = 1.05;
-/// Prone eye height (m): cheek near the floor.
-pub const PRONE_EYE: f32 = 0.45;
+/// The crouch eye drop (m): the staged crouch pose's
+/// root drop (`PoseFrame::from_pose(OperatorPose::Crouch)
+/// .root_y == -0.50`), so the eye falls by exactly the
+/// amount the posed body falls.
+pub const CROUCH_DROP: f32 = 0.50;
+/// Crouching eye height (m above the feet).
+pub const CROUCH_EYE: f32 = STAND_EYE - CROUCH_DROP;
 
-/// Seconds a full stand-to-prone posture change takes.
-/// Eye and capsule heights slew at a constant rate set by
-/// the full range over this time, so a stand-to-crouch
-/// (a shorter distance) lands sooner; no transition ever
-/// snaps.
+/// Seconds a full stand-to-crouch eye travel takes.
+/// The eye slews at a constant rate set by the full
+/// drop over this time; no transition ever snaps.
 pub const POSTURE_TRANSITION_S: f32 = 0.25;
 
-/// The body's posture. The sim's collision capsule does
-/// not change with posture in this slice (see the module
-/// docs in `mod.rs`); posture drives eye height, speed
-/// gear, the traversal crouch flag, and the camera law.
+/// The body's posture, as the frame reports it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Posture {
     Stand,
     Crouch,
-    Prone,
 }
 
 impl Posture {
-    /// The capsule height this posture declares (m).
-    pub fn capsule_height(self) -> f32 {
-        match self {
-            Posture::Stand => STAND_CAPSULE,
-            Posture::Crouch => CROUCH_CAPSULE,
-            Posture::Prone => PRONE_CAPSULE,
-        }
-    }
-
-    /// The eye height this posture declares (m above feet).
+    /// The eye height this posture declares (m).
     pub fn eye_height(self) -> f32 {
         match self {
             Posture::Stand => STAND_EYE,
             Posture::Crouch => CROUCH_EYE,
-            Posture::Prone => PRONE_EYE,
         }
     }
 }
 
 /// Controller configuration, set once by the host.
+/// The third-person boom numbers are host-tunable
+/// here; their defaults are the house follow rig's
+/// own contract (3.4 m back, 0.62 m to his right,
+/// chest height), carried over from the DeBrief host's
+/// `follow_pose`.
 #[derive(Copy, Clone, Debug)]
 pub struct ControllerConfig {
-    /// Crouch mode. false (default): hold-to-crouch —
-    /// `crouch_held` is the posture, releasing stands.
-    /// true: toggle — each `crouch_pressed` edge flips a
-    /// latch the controller owns, and `crouch_held` is
-    /// ignored. The latch lives here, not host-side, so
-    /// the headroom rule (a blocked stand defers, it does
-    /// not unlatch) has exactly one owner.
-    pub crouch_toggle: bool,
+    /// The rig the controller starts in.
+    pub initial_mode: ViewMode,
+    /// Boom length (m) in third person, unaimed.
+    pub tp_distance: f32,
+    /// Shoulder offset (m, toward his right) in third
+    /// person, unaimed.
+    pub tp_shoulder: f32,
+    /// Height of the boom's focus point above the feet
+    /// (m) in third person.
+    pub tp_height: f32,
+    /// Boom length (m) while aiming: the boom tightens.
+    pub tp_aim_distance: f32,
+    /// Shoulder offset (m) while aiming: nearer centre.
+    pub tp_aim_shoulder: f32,
+    /// Which kit the first-person viewmodel wears.
+    pub viewmodel: crate::operator::ViewmodelConfig,
 }
 
 impl Default for ControllerConfig {
     fn default() -> ControllerConfig {
         ControllerConfig {
-            crouch_toggle: false,
+            initial_mode: ViewMode::FirstPerson,
+            tp_distance: 3.4,
+            tp_shoulder: 0.62,
+            tp_height: 1.52,
+            tp_aim_distance: 2.0,
+            tp_aim_shoulder: 0.28,
+            viewmodel: crate::operator::ViewmodelConfig::Street,
         }
     }
 }
 
-/// One frame of player intent, filled by the host.
+/// One fixed tick of player intent, filled by the host.
 ///
-/// Axes are analog: -1..=1, camera-relative (the
-/// controller turns them into a wish direction with the
-/// camera yaw). Look deltas are radians of mouse/stick
-/// travel THIS frame — the controller applies them once
-/// per update, never per physics substep, so look speed
-/// cannot depend on how many substeps a frame buys.
-#[derive(Copy, Clone, Debug, Default)]
+/// `wish` is in camera space: `x` strafes toward the
+/// camera's right, `y` moves toward where the camera
+/// faces; the controller turns it into a world wish
+/// direction with the camera yaw (the orbit yaw in
+/// third person, the eye yaw in first — the movement
+/// math is the same). Its length is the analog
+/// magnitude, clamped to 1.
+#[derive(Copy, Clone, Debug)]
 pub struct PlayerInput {
-    /// Forward axis: +1 walks toward the camera's facing.
-    pub move_forward: f32,
-    /// Strafe axis: +1 moves to the camera's right.
-    pub move_strafe: f32,
-    /// Yaw travel this frame (radians, + turns right).
-    pub look_yaw_delta: f32,
-    /// Pitch travel this frame (radians, + looks up).
-    pub look_pitch_delta: f32,
-    /// Sprint gear held. Sprint is a forward gear: it
-    /// engages only with a real forward component, and
-    /// aiming cancels it.
-    pub sprint_held: bool,
-    /// Crouch level (hold mode).
-    pub crouch_held: bool,
-    /// Crouch pressed edge (toggle mode).
-    pub crouch_pressed: bool,
-    /// Prone pressed edge: toggles prone. Prone exits
-    /// only through this edge or a jump press (which
-    /// stands instead of jumping) — crouch input is
-    /// ignored while prone.
-    pub prone_pressed: bool,
-    /// Jump pressed edge. Consumed by the first physics
-    /// substep of the frame, never repeated into later
-    /// substeps.
-    pub jump_pressed: bool,
-    /// Aim held: narrows the FOV, kills the head-bob,
-    /// and caps the speed gear at walk.
+    /// Camera-space wish: x = right, y = forward.
+    pub wish: Vec2,
+    /// Look travel this tick (radians): x = yaw
+    /// (positive rotates the facing from +Z toward +X,
+    /// the yaw convention of `locomotion::facing`),
+    /// y = pitch (positive looks up). Applied once per
+    /// tick — there are no substeps here; one call is
+    /// one fixed step.
+    pub look_delta: Vec2,
+    /// The wish speed tier; also the posture source.
+    pub speed: SpeedTier,
+    /// Jump pressed edge for this tick. Mantle pre-empts
+    /// it at a ledge, exactly as the sim orders.
+    pub jump: bool,
+    /// Grapple press edge (DeBrief: E press).
+    pub hook_press: bool,
+    /// Grapple held level (DeBrief: E held). Hold keeps
+    /// the rope; the tick it goes false the rope
+    /// detaches, momentum kept.
+    pub hook_held: bool,
+    /// Grapple release edge (DeBrief: E released). A
+    /// release edge forces `hook_held` false for this
+    /// tick even if the host still reports the level.
+    pub hook_release: bool,
+    /// Aim held: narrows the FOV, silences the head-bob,
+    /// faces the body with the camera, and tightens the
+    /// third-person boom.
     pub aim_held: bool,
     /// Lean amount, -1 (full left) ..= 1 (full right).
-    /// A number, never a key: which keys make it is an
-    /// open design question the host owns.
+    /// A number, never a key. In first person the eye
+    /// translates sideways by this; the world never
+    /// rolls for lean.
     pub lean: f32,
-    /// Grapple press edge, passed through to the
-    /// traversal sim (DeBrief binds it to E; the binding
-    /// is the host's, the edge is forwarded untouched).
-    pub hook_press: bool,
-    /// Grapple held level, passed through.
-    pub hook_held: bool,
+    /// Mode toggle edge: switch rigs this tick. The
+    /// body, the rope, the posture and the look all
+    /// carry; only the presentation changes.
+    pub toggle_mode: bool,
+}
+
+impl Default for PlayerInput {
+    fn default() -> PlayerInput {
+        PlayerInput {
+            wish: Vec2::ZERO,
+            look_delta: Vec2::ZERO,
+            speed: SpeedTier::Walk,
+            jump: false,
+            hook_press: false,
+            hook_held: false,
+            hook_release: false,
+            aim_held: false,
+            lean: 0.0,
+            toggle_mode: false,
+        }
+    }
 }
