@@ -84,4 +84,3 @@ pub fn check_mod_folder(dir: &Path) -> CheckReport {
         },
     }
 }
-

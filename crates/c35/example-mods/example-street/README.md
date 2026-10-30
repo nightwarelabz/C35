@@ -71,4 +71,3 @@ One prop per file. Fields:
   file:line locations. A mod with any error is quarantined whole —
   none of its props load, none of its placements apply, and the
   game still boots.
-

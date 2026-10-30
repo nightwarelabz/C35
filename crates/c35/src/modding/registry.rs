@@ -697,4 +697,3 @@ mod tests {
         assert!(reg.build("greyport:nope", &ParamValues::new()).is_err());
     }
 }
-

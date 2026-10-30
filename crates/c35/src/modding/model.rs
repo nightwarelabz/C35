@@ -427,4 +427,3 @@ pub fn split_id(id: &str) -> Option<(&str, &str)> {
 
 /// Namespaces the engine owns. A mod claiming one is refused.
 pub const RESERVED_NAMESPACES: [&str; 2] = ["greyport", "debrief"];
-

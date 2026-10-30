@@ -1550,4 +1550,3 @@ pub fn load_mods(
         placed_triangles,
     }
 }
-

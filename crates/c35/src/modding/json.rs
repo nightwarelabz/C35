@@ -492,4 +492,3 @@ mod tests {
         assert_eq!(v.field("b").unwrap().line, 3);
     }
 }
-
