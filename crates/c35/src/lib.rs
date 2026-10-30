@@ -57,6 +57,7 @@ pub mod scene;
 pub mod sound;
 pub mod traversal;
 pub mod vista;
+pub mod weather;
 pub mod world;
 
 /// Re-exported so hosts build against exactly the engine's wgpu.
