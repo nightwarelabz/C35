@@ -157,10 +157,16 @@ pub struct Params {
 }
 
 struct App {
-    window: Option<Arc<Window>>,
+    // DROP ORDER IS LOAD-BEARING (the windowed-host exit segfault,
+    // G1 GL/Mesa + local Wayland/GL repro exit 139): the surface must
+    // die before the device, and both before the window, while the
+    // event loop's display connection is still alive. run() tears
+    // these three down explicitly, in this order, before returning;
+    // this declaration order is the same order, as backstop.
     surface: Option<c35::wgpu::Surface<'static>>,
     surface_config: Option<c35::wgpu::SurfaceConfiguration>,
     renderer: Option<c35::Renderer>,
+    window: Option<Arc<Window>>,
     size: (u32, u32),
 
     blk: Block,
@@ -685,6 +691,21 @@ pub fn run(blk: Block, reality: &Reality, params: Params) {
         "windowed session ended: {} frames rendered, {} sim steps ({:.1} s of street time)",
         app.frame_count, app.sim_steps, app.sim_time
     );
+    // TEARDOWN ORDER — THE EXIT-SEGFAULT FIX. The session runs fine
+    // and this line prints, then the old code segfaulted: run()'s
+    // locals drop the event loop before the app, and App's fields
+    // dropped the window before the device, so the renderer's drop
+    // (its timestamp buffer is the last Arc keeping wgpu's Global
+    // alive) dropped Mesa's EGL instance into a dead display
+    // connection — local Wayland/GL repro exit 139, backtrace
+    // through libEGL_mesa into libwayland-client's marshal. Tear the
+    // three down here, in this order, while the event loop is still
+    // alive: surface, then device, then window. The loop then drops
+    // last with nothing GPU or window left behind. Teardown-only;
+    // no behaviour, scene, or presentation change.
+    drop(app.surface.take());
+    drop(app.renderer.take());
+    drop(app.window.take());
 }
 
 impl ApplicationHandler for App {
