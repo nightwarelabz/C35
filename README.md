@@ -1,7 +1,6 @@
 <img width="1774" height="887" alt="c35" src="https://github.com/user-attachments/assets/453573f9-385e-4490-bb9a-5eb6b642794c" />
-#C35
 
-# Comigen
+# C35 — Comigen
 
 **Comigen** is a game graphics engine built on one conviction: gorgeous
 visuals should be *cheap*. It is being built to make next-generation games
@@ -65,7 +64,8 @@ mid-January, autumn peaks ~Oct 19, spring ~Apr 16 (northern hemisphere).
 The vista obeys the computed state end to end:
 
 - **Sun** — disc position, light direction, colour and intensity from the
-  solar position; a real 2048² shadow map (one cascade) makes the terrain
+  solar position; a real shadow map (one cascade; 4096² since the
+  graphics push, 2048² through M6) makes the terrain
   shadow itself, and the pass is skipped outright when the sun is down.
 - **Sky** — the gradient, horizon warmth and fog tint follow the sun's
   elevation; at night the stars come out and a moon — a faint key light
@@ -80,8 +80,10 @@ The vista obeys the computed state end to end:
 
 - **Native hosts** read the **system clock**. Location comes from the
   environment: `COMIGEN_LAT` (latitude, degrees) and `COMIGEN_LON`
-  (longitude), or `COMIGEN_UTC_OFFSET_MIN` when there is no longitude.
-  The windowed host also falls back to the OS local UTC offset on its own.
+  (longitude), or — headless host only — `COMIGEN_UTC_OFFSET_MIN` when
+  there is no longitude. The windowed host does not read
+  `COMIGEN_UTC_OFFSET_MIN`; without a longitude it uses the OS local
+  UTC offset.
 - **Web host** reads the **system clock** via `Date` and the position via
   the **Geolocation API** when the visitor grants it.
 - **When location is unknown, the engine says so.** The ledger of every
@@ -135,7 +137,8 @@ M3 turns the renderer into an engine core, in three systems:
 - **The quality governor.** An exponential moving average of frame time
   is held against a target (16.7 ms). Over budget, the governor steps
   down a ranked ladder — render scale 1.00 → 0.85 → 0.70 → 0.55, then
-  shadow map 2048 → 1024 → off, then terrain detail reach, then water
+  shadow map 4096 → 2048 → 1024 → off (2048 → 1024 → off before the
+  graphics push), then terrain detail reach, then water
   wave octaves — one step per evaluation cadence with cooldowns, and
   steps back up only on deep, sustained headroom. It cannot hunt.
   **Pin law:** an operator may pin a level (windowed host keys 0–4,
@@ -304,7 +307,8 @@ stealth-action immersive sim) and its chosen register:
   parity hash is M5's own, and the reality matrix re-reads to the
   decimal on all four season pins. The web host carries the mode
   behind the same rig-seam class as its clock pin
-  (`window.__comigen_present = "ps15"`).
+  (`window.__comigen_present = "ps15"`); a third rig seam,
+`window.__comigen_force_gl = true`, forces wgpu's GL (WebGL2) backend.
 - **The operator** (`crates/c35/src/operator.rs`) — the character
   pipeline, and DeBrief's protagonist as an engine citizen. Built
   procedurally, geometry and generated surfaces only: 113 rigid
@@ -344,7 +348,9 @@ vista cost 4 draw calls and a few MiB of tracked GPU memory.
 - **Real shadows:** one directional shadow map from the sun (single
   cascade, 2048×2048 — chosen because the vista spans ~760 units and
   1024² would leave >0.7 units per texel; at 2048² a texel is ~0.37
-  units). The ledger prices the pass separately. The M1 headwall, flat
+  units). The ledger prices the pass separately. (Since raised to
+  4096², ≈0.19 units per texel — `SHADOW_MAP_SIZE` in
+  `crates/c35/src/lib.rs`.) The M1 headwall, flat
   for want of self-shadowing, now stands in its own shadow.
 - **Terrain detail pass:** multi-octave noise grain and normal
   perturbation in the terrain shader, strata + grain breakup in the rock
@@ -407,11 +413,17 @@ hardware the same ledger is the first thing to look at.)
 ## Workspace layout
 
 ```
-crates/c35/          the engine (ECS core, governor, renderer, world/reality layer, scene, noise, shaders)
+crates/c35/          the engine (ECS core, governor, renderer, world/reality layer, scene, noise, shaders,
+                     operator, props, locomotion, modding, traversal, perception, sound, weather)
+crates/c35/examples/ probes and demos (cargo run -p c35 --example <name>)
+crates/c35/example-mods/  the shipped example mod (example-street)
 hosts/native/        headless proof host: offscreen run, ledger, hero PNG
 hosts/windowed/      windowed host: the vista live, free-fly camera, title-bar ledger
 hosts/web/           browser host: same vista on a canvas, on-page ledger
 ```
+
+`hosts/debrief/` is still in the tree but is not a workspace member —
+the game moved to nightwarelabz/DeBrief; the directory is a vestigial copy.
 
 ## Build & run
 
@@ -430,6 +442,8 @@ bar; the full reality reading prints to stdout at startup. The quality
 governor governs live in this host — keys **0–4** pin ladder levels
 **0–4** (a pin is absolute; the governor then only watches and reports),
 **`** releases the pin; the title bar shows the level in force.
+`COMIGEN_SCALE` (default 1.0) sets the internal render scale the
+windowed host starts with.
 
 ### On a Mac (Apple silicon)
 
@@ -465,6 +479,15 @@ COMIGEN_LAT=41.88 COMIGEN_LON=-87.63 \
 #          --ps15-fog 2.0 (the PS1.5 fog look multiplier)
 #          --operator stand|aim|crouch (place the operator, staged pose)
 #          --pose op-a|op-b (his proof cameras)
+#          --drift-rate R (with --drift: orbit speed multiplier,
+#            default 1.0; rig only)
+#          --move full|ab (drive the operator through a locomotion
+#            proof script; without --frames the run lasts 20000 frames)
+#          --move-cam follow|track (camera during --move; default follow)
+#          --move-ghost (run the --move drive without placing the
+#            operator's mesh)
+#          --vel-reject GAIN,THRESH_PX (velocity-aware history
+#            rejection in the resolve; gain 0 = off, the default)
 # measurement rig only: COMIGEN_PIN_ISO=2026-01-15T08:00:00-06:00 pins the instant
 ```
 
@@ -480,7 +503,20 @@ python3 -m http.server --directory hosts/web 8080
 ```
 
 The wasm-bindgen CLI version must match the `wasm-bindgen` crate version in
-`Cargo.lock`.
+`Cargo.lock` (0.2.129 at c158214:
+`cargo install wasm-bindgen-cli --version 0.2.129`).
+
+Engine examples (probes and demos in `crates/c35/examples/`):
+
+```sh
+cargo run --release -p c35 --example <name>
+# ao_probe check_mod frustum_probe heights movement_probe op_study
+# operator_probe perception_demo sound_demo traversal_course
+# weather_demo world_probe
+cargo run -p c35 --example check_mod -- crates/c35/example-mods/example-street
+```
+
+Tests: `cargo test --workspace`.
 
 Headless Linux notes: the native hosts need a Vulkan (or GL) driver to
 find an adapter — on a GPU-less box, Mesa's software driver is enough
@@ -492,6 +528,20 @@ wgpu's WebGL2 backend — the on-page ledger always names the backend that
 actually rendered (and which AA it ran: WebGL2 carries FXAA, not TAA).
 
 ## Status
+
+Since M6 (as of c158214) the tree also carries, each in its own
+module of `crates/c35/src/`: the M7 pose-graph animator + movement
+controller (`locomotion.rs`); mod engine v1 — registry, strict JSON
+parser, loader, validator and the example mod (`modding/`); traversal —
+capsule physics, verlet grapple, wall-run, mantle, navmesh, poses
+(`traversal/`); perception and enemy AI — the one-field law, scent,
+sound propagation, soldier/enemy/mecha brains, the alert and witness
+economy (`perception/`); the graphics push — lamp bloom, 4096² shadows,
+roughness materials, a 24-lamp cap, ground haze; sound playback — a
+deterministic software mixer, synthesized voices, music bed hooks
+(`sound/`); and weather — a seeded regime driving rain, wind, fog and
+wetness, plus lightning (`weather/`). The M6 record below stands as
+written.
 
 M6: the PS1.5 presentation mode (480p-class internal frame,
 snapped texel surfaces, dithered palette grade, fog as a look

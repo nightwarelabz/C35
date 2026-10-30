@@ -10,6 +10,12 @@ never one without the other." This brief is that milestone, whole:
 physics, rope, wall-run, navmesh, and the animator family land as ONE
 piece or not at all.
 
+> **Status as of c158214:** traversal landed (26e5b6a: capsule physics,
+> verlet grapple on E, wall-run, mantle, navmesh, poses) in
+> `crates/c35/src/traversal/`. `hosts/debrief` is no longer a workspace
+> member — the game moved to nightwarelabz/DeBrief (cb62da6). No
+> `REPORT.md` from this milestone is in this repo.
+
 **State you start from:** C35 main as the parent names it at dispatch
 (operator perfection phase 1 landed; confirm the base hash before
 building, as the windowed landing did). What exists to build on:

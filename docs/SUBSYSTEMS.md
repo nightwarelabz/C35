@@ -7,6 +7,14 @@ live in the one Rust tree, native + browser in lockstep, zero-dependency
 doctrine as ever: design-adopt from the field, build narrow for the games
 we actually ship.
 
+> **Status as of c158214 (2026-10-30):** physics, sound and weather are
+> no longer absent — `crates/c35/src/traversal/` (capsule physics,
+> verlet rope, wall-run, navmesh), `sound/` (mixer, synth, voices,
+> footsteps, music, playback) and `weather/` (regime, state, lightning)
+> exist, as do `perception/` (soldier/enemy/mecha brains, scent, sound
+> propagation) and `modding/`. The statuses below are as written for
+> Slice 1 and have not been re-graded.
+
 ## 1. Animator — SEEDED, not built
 
 What exists: M7's `locomotion.rs` — a pose-graph animator + movement
@@ -30,7 +38,7 @@ Sequence: formalization rides THE REBUILD (already its scope); clips +
 events land with the first milestone that needs a man doing something the
 gaits can't say.
 
-## 2. Physics — DOES NOT EXIST
+## 2. Physics — DOES NOT EXIST (as written; see status note: `traversal/` since built)
 
 What exists: `height_at` terrain following and scripted drives. No
 collision, no gravity, no bodies. M7's camera debt (no terrain collision)
@@ -56,7 +64,7 @@ like the gaits — same inputs, same swing, byte for byte.
 Sequence: slice 1 lands WITH the traversal/grapple milestone (collision +
 rope); nothing in Slice 1 or the Rebuild blocks on it.
 
-## 3. Sound — DOES NOT EXIST, and is a simulation system
+## 3. Sound — DOES NOT EXIST, and is a simulation system (as written; see status note: `sound/` since built)
 
 What exists: nothing. Every host is silent.
 

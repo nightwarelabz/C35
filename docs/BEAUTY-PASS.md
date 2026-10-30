@@ -371,7 +371,7 @@ already by design — this phase makes it visible.
 ### Phase 3 — Lighting
 
 Sodium lamp quality, light-field quality, shadows. The 2048²
-shadows exist; this phase is falloff, pools, and the light field's
+shadows exist (4096² as of c158214, graphics push 7c4b499); this phase is falloff, pools, and the light field's
 resolution: lamp pools with soft edges and hot cores, falloff that
 separates near from far, shadow quality that holds at fullscreen.
 - **Proof:** the same four cameras, judged against #9 and #11 —

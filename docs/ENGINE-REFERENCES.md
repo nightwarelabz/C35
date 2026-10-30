@@ -144,7 +144,7 @@ and the tuning shapes, all proven at FPS speed for twenty years.
 - **Two shadow techniques, both real:** stencil shadow volumes
   (no penumbra, high fill-rate cost — the technique Doom 3 also
   used) and shadow mapping, with `r_shadows_throwdistance` bounding
-  the shadowed area. C35 already has 2048² shadow maps; the take is
+  the shadowed area. C35 already has 2048² shadow maps (4096² as of c158214); the take is
   the BOUNDING discipline (shadowed area is a budgeted region, not
   the whole world) and the per-light pass accounting in the ledger.
 - **Lightgrid sampling override.** Client-side QuakeC may override

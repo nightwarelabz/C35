@@ -3,6 +3,16 @@
 Read-only investigation. No tree edits, no repo writes, no code, no
 benchmarks, no proof chains. Chase decides what gets built next.
 
+> **Status as of c158214 (2026-10-30):** this snapshot predates the
+> modules since landed in `crates/c35/src/`: `modding/` (mod engine v1),
+> `traversal/` (capsule physics, grapple, wall-run, mantle, navmesh),
+> `perception/` (perception + enemy AI), `sound/` (software mixer and
+> synthesized voices) and `weather/` (seeded regime, rain/wind/fog,
+> lightning). The "Has" lines and the module list below describe the
+> tree when this report was written. The design docs it cites other
+> than `ENGINE-REFERENCES.md`, `MOD-ENGINE.md`, `BEAUTY-PASS.md` and
+> `TRAVERSAL-BRIEF.md` live in the DeBrief repo's `docs/`, not here.
+
 ## Standing rule — references only, everything from scratch
 
 Chase, 2026-10-30: open-source engines are REFERENCES ONLY. Every line
@@ -34,11 +44,11 @@ this report says so:
   from-scratch rule above; its verified facts (grapple state machine,
   movement model, bake pipeline shape, stimulus architecture) are what
   this report reuses as study pointers.
-- `FIRST-PERSON.md` — the game is a first-person FPS stealth sim
+- `FIRST-PERSON.md` (DeBrief repo) — the game is a first-person FPS stealth sim
   (decided 2026-10-30, superseding the third-person lines).
-- `traversal/BRIEF.md` — traversal physics/nav (predates FP and the
+- `TRAVERSAL-BRIEF.md` — traversal physics/nav (predates FP and the
   E-binding; FIRST-PERSON.md governs where they differ).
-- `DESIGN.md` (local copy is v0.1, third-person wording — perspective
+- `DESIGN.md` (DeBrief repo; local copy is v0.1, third-person wording — perspective
   lines superseded by FIRST-PERSON.md; systems content stands),
   `WORLD.md`, `STORY-BIBLE.md` (campaign arc PROPOSED, mysteries
   binding), `COMPENDIUM.md` (Archive spec, PROPOSED schemas),
