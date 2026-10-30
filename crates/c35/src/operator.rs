@@ -1266,12 +1266,14 @@ const FACES: [([f32; 3], [[f32; 3]; 4]); 6] = [
 ];
 
 /// One part's inventory line, for the probe and the report.
+#[derive(Clone)]
 pub struct PartInfo {
     pub name: &'static str,
     pub bone: Bone,
     pub triangles: u32,
 }
 
+#[derive(Clone)]
 pub struct OperatorMesh {
     pub vertices: Vec<OperatorVertex>,
     pub indices: Vec<u32>,
@@ -1281,6 +1283,61 @@ pub struct OperatorMesh {
 impl OperatorMesh {
     pub fn triangle_count(&self) -> u64 {
         (self.indices.len() / 3) as u64
+    }
+}
+
+/// Build immutable topology once, then skin into reusable output storage.
+/// The old figure builders remain available for one-shot and authored poses.
+/// This is the animation path: no geometry, index, or part-list allocation
+/// after `mesh()` creates the caller's output buffer.
+pub struct FigureTemplate {
+    bind: OperatorMesh,
+    bones: Vec<Bone>,
+}
+
+impl FigureTemplate {
+    pub fn operator() -> Self {
+        let bind = build_operator_frame(&PoseFrame::bind(), Vec3::ZERO, 0.0, 0.0);
+        let mut bones = Vec::with_capacity(bind.vertices.len());
+        for part in parts() { bones.extend(std::iter::repeat_n(part.bone, 24)); }
+        bones.extend(std::iter::repeat_n(face_quad().1, 4));
+        Self { bind, bones }
+    }
+
+    pub fn from_parts(parts: &[PartSpec], quads: &[QuadSpec]) -> Self {
+        let bind = build_figure_frame(parts, quads, &PoseFrame::bind(), Vec3::ZERO, 0.0, 0.0);
+        let mut bones = Vec::with_capacity(bind.vertices.len());
+        for part in parts { bones.extend(std::iter::repeat_n(part.bone, 24)); }
+        for quad in quads { bones.extend(std::iter::repeat_n(quad.bone, 4)); }
+        Self { bind, bones }
+    }
+
+    /// Allocate an output mesh once. Keep this mesh and update it each tick.
+    pub fn mesh(&self) -> OperatorMesh { self.bind.clone() }
+
+    pub fn skin_into(&self, out: &mut OperatorMesh, frame: &PoseFrame,
+                     spot: Vec3, ground_y: f32, yaw_deg: f32) {
+        // Also repair a caller-supplied or repurposed mesh once. The hot
+        // path only compares topology; it never copies unchanged indices.
+        if out.vertices.len() != self.bind.vertices.len() || out.indices != self.bind.indices {
+            *out = self.mesh();
+        }
+        let root = root_matrix(spot, ground_y, frame, yaw_deg);
+        let mats = bone_matrices(frame).map(|m| root * m);
+        let mut previous: Option<(Bone, [f32; 3])> = None;
+        let mut normal = [0.0; 3];
+        for ((dst, src), bone) in out.vertices.iter_mut().zip(&self.bind.vertices).zip(&self.bones) {
+            let m = mats[bone.idx()];
+            *dst = *src;
+            dst.position = m.transform_point3(Vec3::from_array(src.position)).to_array();
+            // Faces emit four consecutive vertices with one normal.
+            // Transform/normalize it once, as the one-shot builder does.
+            if previous != Some((*bone, src.normal)) {
+                normal = m.transform_vector3(Vec3::from_array(src.normal)).normalize_or_zero().to_array();
+                previous = Some((*bone, src.normal));
+            }
+            dst.normal = normal;
+        }
     }
 }
 
@@ -1739,3 +1796,4 @@ pub fn build_body_awareness(spot: Vec3, ground_y: f32, yaw_deg: f32) -> Operator
     let specs = body_awareness_parts();
     build_figure_frame(&specs, &[], &PoseFrame::bind(), spot, ground_y, yaw_deg)
 }
+

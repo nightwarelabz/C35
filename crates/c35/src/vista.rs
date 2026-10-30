@@ -195,6 +195,7 @@ impl Vista {
     /// Build the scene's entities from generated tile metadata:
     /// (centre, radius, per-LOD triangle counts) per tile, in tile order.
     pub fn new(tile_meta: &[(Vec3, f32, [u64; 3])]) -> Vista {
+        assert_eq!(tile_meta.len(), TILE_COUNT, "vista metadata must match the terrain grid");
         let mut v = Vista {
             cameras: Arena::new(),
             worlds: Arena::new(),
@@ -332,7 +333,11 @@ fn sys_visibility(v: &mut Vista, pool: &JobPool) {
     };
     let frustum = Frustum::from_view_proj(&view_proj);
     let spheres = &v.spheres;
-    pool.for_each_chunk_mut(&mut v.vis, pool.size(), &|start, chunk| {
+    // Six plane tests over sixteen spheres are cheaper than queueing,
+    // allocating job closures, and waiting on worker latches. Keep small
+    // visibility sets inline; expensive terrain generation still uses the pool.
+    let chunks = (spheres.len() / 64).max(1).min(pool.size().max(1));
+    pool.for_each_chunk_mut(&mut v.vis, chunks, &|start, chunk| {
         for (i, slot) in chunk.iter_mut().enumerate() {
             let (c, r) = spheres[start + i];
             slot.visible = frustum.sphere_visible(c, r);
@@ -342,7 +347,7 @@ fn sys_visibility(v: &mut Vista, pool: &JobPool) {
     });
     if shadow_light {
         let lfrustum = Frustum::from_view_proj(&light_vp);
-        pool.for_each_chunk_mut(&mut v.light_vis, pool.size(), &|start, chunk| {
+        pool.for_each_chunk_mut(&mut v.light_vis, chunks, &|start, chunk| {
             for (i, slot) in chunk.iter_mut().enumerate() {
                 let (c, r) = spheres[start + i];
                 slot.visible = lfrustum.sphere_visible(c, r);
@@ -460,3 +465,4 @@ fn now() -> u32 {
 fn elapsed_ms(_t0: u32) -> f64 {
     0.0
 }
+

@@ -21,7 +21,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::{any::Any, cell::Cell, panic::{catch_unwind, resume_unwind, AssertUnwindSafe}};
+use std::{
+    any::Any,
+    cell::Cell,
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+};
 
 thread_local! {
     // A nested batch must run inline: waiting for the same pool from
@@ -43,7 +47,10 @@ pub struct Arena<T> {
 
 impl<T> Arena<T> {
     pub fn new() -> Arena<T> {
-        Arena { slots: Vec::new(), live: 0 }
+        Arena {
+            slots: Vec::new(),
+            live: 0,
+        }
     }
 
     pub fn insert(&mut self, e: Entity, value: T) {
@@ -87,7 +94,9 @@ impl<T> Arena<T> {
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
-        self.slots.iter_mut().enumerate()
+        self.slots
+            .iter_mut()
+            .enumerate()
             .filter_map(|(i, slot)| slot.as_mut().map(|v| (Entity(i as u32), v)))
     }
 
@@ -160,7 +169,10 @@ impl JobPool {
         // Explicit zero-worker mode also makes headless deterministic
         // tests and single-threaded hosts independent of thread support.
         #[cfg(target_arch = "wasm32")]
-        let n = { let _ = n; 0 };
+        let n = {
+            let _ = n;
+            0
+        };
         let (tx, rx) = channel::<Job>();
         let rx = Arc::new(Mutex::new(rx));
         let executed = Arc::new(AtomicU64::new(0));
@@ -318,4 +330,3 @@ pub struct CoreStats {
     pub pool_size: usize,
     pub update_ms: f64,
 }
-

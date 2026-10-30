@@ -95,7 +95,11 @@ const UP_EVALS_NEEDED: u32 = 8; // ~4 s of sustained headroom at cadence
 
 impl Governor {
     pub fn new(target_ms: f64) -> Governor {
-        let target_ms = if target_ms.is_finite() && target_ms > 0.0 { target_ms } else { 1000.0 / 60.0 };
+        let target_ms = if target_ms.is_finite() && target_ms > 0.0 {
+            target_ms
+        } else {
+            1000.0 / 60.0
+        };
         Governor {
             target_ms,
             level: 0,
@@ -247,4 +251,3 @@ impl Governor {
         self.headroom_evals = 0;
     }
 }
-

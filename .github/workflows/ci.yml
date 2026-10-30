@@ -24,6 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
       - run: cargo check --workspace --all-targets --locked
+      - run: cargo run -p c35 --example systems_probe --locked
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -34,3 +35,14 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p comigen-web --target wasm32-unknown-unknown --locked
+  gpu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      XDG_RUNTIME_DIR: /tmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update -qq && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - run: cargo test -p c35 --test render --locked -- --ignored --nocapture

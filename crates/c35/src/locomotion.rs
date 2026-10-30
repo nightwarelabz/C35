@@ -238,6 +238,7 @@ impl LegAnim {
 /// [`Animator::update`]).
 pub struct Animator {
     phase: f32,
+    step_events: [Option<Footstep>; 2],
     legs: [LegAnim; 2],
     aim: f32,
     crouch: f32,
@@ -256,6 +257,16 @@ pub struct Animator {
     ground_fn: Option<fn(f32, f32) -> f32>,
 }
 
+/// A foot entering stance, emitted where the foot is planted. Surface
+/// classification and playback belong to the host's shared world query.
+#[derive(Copy, Clone, Debug)]
+pub struct Footstep {
+    pub left: bool,
+    pub position: Vec3,
+    pub speed: f32,
+    pub crouch: f32,
+}
+
 impl Default for Animator {
     fn default() -> Self {
         Self::new()
@@ -266,6 +277,7 @@ impl Animator {
     pub fn new() -> Animator {
         Animator {
             phase: 0.0,
+            step_events: [None; 2],
             legs: [LegAnim::new(), LegAnim::new()],
             aim: 0.0,
             crouch: 0.0,
@@ -297,6 +309,12 @@ impl Animator {
         self.phase
     }
 
+    /// Contact events emitted by the last update only. Consume after
+    /// each simulation tick; no queue, allocation, or duplicate stance events.
+    pub fn footsteps(&self) -> impl Iterator<Item = &Footstep> {
+        self.step_events.iter().flatten()
+    }
+
     /// Whether a leg is in its stance interval this frame.
     pub fn contact(&self, left: bool) -> bool {
         self.legs[if left { 0 } else { 1 }].contact
@@ -318,7 +336,8 @@ impl Animator {
 
     /// Advance the animation by `dt` and produce the pose frame.
     pub fn update(&mut self, dt: f32, input: &AnimInput) -> PoseFrame {
-        let dt = dt.clamp(0.0, 0.1);
+        let dt = if dt.is_finite() { dt.clamp(0.0, 0.1) } else { 0.0 };
+        self.step_events = [None; 2];
         // The ground sample, dispatched once into a local: the leg
         // loop below holds &mut borrows into self, so sampling must
         // not borrow self (the island's height_at never did).
@@ -451,6 +470,12 @@ impl Animator {
                     );
                 leg.plant_ground = ground(p.x, p.z);
                 leg.plant = clamp_reach(Vec3::new(p.x, leg.plant_ground + ANKLE_HEIGHT, p.z));
+                if dt > 0.0 {
+                    self.step_events[i] = Some(Footstep {
+                        left, position: Vec3::new(p.x, leg.plant_ground, p.z),
+                        speed, crouch: self.crouch,
+                    });
+                }
             }
             leg.contact = in_contact;
             let target = if in_contact {
@@ -1001,3 +1026,4 @@ pub fn proof_script(name: &str) -> Option<(Vec2, Vec<ScriptLeg>)> {
     };
     Some((start, legs))
 }
+

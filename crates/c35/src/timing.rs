@@ -33,13 +33,28 @@ impl FixedClock {
     /// `hz` and `max_steps` must be nonzero. Typical setup: 120 Hz,
     /// at most eight ticks per rendered frame.
     pub fn new(hz: u32, max_steps: u32) -> Self {
-        assert!(hz > 0 && max_steps > 0, "fixed clock requires nonzero rate and budget");
-        Self { hz, max_steps, remainder: 0, tick: 0, dropped: Duration::ZERO }
+        assert!(
+            hz > 0 && max_steps > 0,
+            "fixed clock requires nonzero rate and budget"
+        );
+        Self {
+            hz,
+            max_steps,
+            remainder: 0,
+            tick: 0,
+            dropped: Duration::ZERO,
+        }
     }
 
-    pub fn step_seconds(&self) -> f32 { 1.0 / self.hz as f32 }
-    pub fn tick(&self) -> u64 { self.tick }
-    pub fn dropped_time(&self) -> Duration { self.dropped }
+    pub fn step_seconds(&self) -> f32 {
+        1.0 / self.hz as f32
+    }
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+    pub fn dropped_time(&self) -> Duration {
+        self.dropped
+    }
 
     pub fn advance(&mut self, elapsed: Duration) -> StepBatch {
         self.remainder += elapsed.as_nanos() * u128::from(self.hz);
@@ -55,16 +70,24 @@ impl FixedClock {
         self.dropped = self.dropped.saturating_add(dropped);
         let start = self.tick;
         self.tick = self.tick.saturating_add(steps);
-        StepBatch { ticks: start..self.tick, alpha: self.remainder as f32 / SECOND as f32, dropped }
+        StepBatch {
+            ticks: start..self.tick,
+            alpha: self.remainder as f32 / SECOND as f32,
+            dropped,
+        }
     }
 
     /// Discard the fractional backlog when resuming from a pause.
     /// Simulation tick identity and the accumulated cost ledger survive.
-    pub fn reset_accumulator(&mut self) { self.remainder = 0; }
+    pub fn reset_accumulator(&mut self) {
+        self.remainder = 0;
+    }
 }
 
 impl Default for FixedClock {
-    fn default() -> Self { Self::new(120, 8) }
+    fn default() -> Self {
+        Self::new(120, 8)
+    }
 }
 
 #[cfg(test)]

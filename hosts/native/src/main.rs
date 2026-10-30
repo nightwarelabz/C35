@@ -242,6 +242,10 @@ fn main() {
     let scale: f32 = arg_value(&args, "--scale")
         .and_then(|v| v.parse().ok())
         .unwrap_or(1.0);
+    if width == 0 || height == 0 || frames == 0 || !scale.is_finite() || scale <= 0.0 {
+        eprintln!("width, height, frame count, and finite render scale must be positive");
+        std::process::exit(2);
+    }
     let out = arg_value(&args, "--out").unwrap_or_else(|| "hero.png".to_string());
     let drift = args.iter().any(|a| a == "--drift");
     let drift_rate: f32 = arg_value(&args, "--drift-rate")
@@ -373,6 +377,8 @@ fn main() {
     struct Drive {
         ctrl: c35::locomotion::Controller,
         anim: c35::locomotion::Animator,
+        template: c35::operator::FigureTemplate,
+        mesh: c35::operator::OperatorMesh,
         anchor: c35::glam::Vec3,
         log: String,
         top_speed: f32,
@@ -384,7 +390,10 @@ fn main() {
             .unwrap_or_else(|| panic!("unknown --move script '{name}'"));
         let ctrl = c35::locomotion::Controller::new(start, legs);
         let a = *ctrl.agent();
+        let template = c35::operator::FigureTemplate::operator();
+        let mesh = template.mesh();
         Drive {
+            template, mesh,
             ctrl,
             anim: c35::locomotion::Animator::new(),
             anchor: c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
@@ -410,13 +419,13 @@ fn main() {
         };
         let frame0 = d.anim.update(0.0, &input);
         if !move_ghost {
-            let mesh = c35::operator::build_operator_frame(
-                &frame0,
+            d.template.skin_into(
+                &mut d.mesh, &frame0,
                 c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
                 d.anim.ground_y(),
                 a.yaw.to_degrees(),
             );
-            renderer.update_operator(&mesh);
+            renderer.update_operator(&d.mesh);
         }
         d.anchor = c35::glam::Vec3::new(a.pos.x, d.anim.ground_y(), a.pos.y);
     }
@@ -446,13 +455,13 @@ fn main() {
             let a = *d.ctrl.agent();
             d.top_speed = d.top_speed.max(a.speed);
             if !move_ghost {
-                let mesh = c35::operator::build_operator_frame(
-                    &pframe,
+                d.template.skin_into(
+                    &mut d.mesh, &pframe,
                     c35::glam::Vec3::new(a.pos.x, 0.0, a.pos.y),
                     d.anim.ground_y(),
                     a.yaw.to_degrees(),
                 );
-                renderer.update_operator(&mesh);
+                renderer.update_operator(&d.mesh);
             }
             let target_anchor = c35::glam::Vec3::new(a.pos.x, d.anim.ground_y(), a.pos.y);
             let k = 1.0 - (-dt / 0.14f32).exp();
@@ -731,3 +740,4 @@ fn save_png(
     let img = image::RgbaImage::from_raw(width, height, pixels).expect("pixel buffer size");
     img.save(path).expect("save png");
 }
+

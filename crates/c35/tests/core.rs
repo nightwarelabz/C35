@@ -10,8 +10,13 @@ fn arena_lifecycle_and_order() {
     assert_eq!(arena.len(), 2);
     assert_eq!(arena.remove(Entity(8)), Some(3));
     assert_eq!(arena.remove(Entity(8)), None);
-    for (_, value) in arena.iter_mut() { *value += 10; }
-    assert_eq!(arena.iter().map(|(e, v)| (e.0, *v)).collect::<Vec<_>>(), vec![(2, 12)]);
+    for (_, value) in arena.iter_mut() {
+        *value += 10;
+    }
+    assert_eq!(
+        arena.iter().map(|(e, v)| (e.0, *v)).collect::<Vec<_>>(),
+        vec![(2, 12)]
+    );
     arena.clear();
     assert!(arena.is_empty());
     arena.insert(Entity(8), 4);
@@ -25,7 +30,9 @@ fn chunks_cover_each_element_once() {
         for len in 0..33 {
             let mut values = vec![0usize; len];
             pool.for_each_chunk_mut(&mut values, 4, &|start, chunk| {
-                for (i, value) in chunk.iter_mut().enumerate() { *value += start + i + 1; }
+                for (i, value) in chunk.iter_mut().enumerate() {
+                    *value += start + i + 1;
+                }
             });
             assert_eq!(values, (1..=len).collect::<Vec<_>>());
         }
@@ -38,7 +45,9 @@ fn worker_panic_drains_borrowed_jobs_and_pool_survives() {
     let mut values = [0; 16];
     let panic = catch_unwind(AssertUnwindSafe(|| {
         pool.for_each_chunk_mut(&mut values, 4, &|start, chunk| {
-            if start == 0 { panic!("intentional batch failure"); }
+            if start == 0 {
+                panic!("intentional batch failure");
+            }
             chunk.fill(1);
         });
     }));

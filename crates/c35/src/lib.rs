@@ -45,6 +45,7 @@
 //! draw calls per pass, triangles, render scale, tracked memory, frame
 //! time, and GPU pass times where the backend exposes timestamp queries.
 
+pub mod acoustics;
 pub mod ecs;
 pub mod governor;
 pub mod locomotion;
@@ -53,8 +54,12 @@ pub use mesh_buffers::MeshUploadStats;
 use mesh_buffers::MeshBuffers;
 pub mod noise;
 pub mod operator;
+pub mod physics;
 pub mod props;
+mod readback;
+use readback::ReadbackGate;
 pub mod scene;
+pub mod spatial;
 pub mod timing;
 pub mod vista;
 pub mod world;
@@ -65,7 +70,7 @@ pub use pollster;
 pub use glam;
 pub use operator::OperatorPose;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
@@ -155,18 +160,20 @@ impl AaMode {
 
 /// Simple mean / percentile helpers shared by both hosts' ledgers.
 pub fn mean(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
-        return 0.0;
-    }
-    xs.iter().sum::<f64>() / xs.len() as f64
+    let mut count = 0;
+    let sum: f64 = xs.iter().copied().filter(|x| x.is_finite())
+        .inspect(|_| count += 1).sum();
+    if count == 0 { 0.0 } else { sum / count as f64 }
 }
 
 pub fn percentile(xs: &[f64], p: f64) -> f64 {
     if xs.is_empty() {
         return 0.0;
     }
-    let mut v: Vec<f64> = xs.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite()).collect();
+    if v.is_empty() { return 0.0; }
+    v.sort_by(f64::total_cmp);
+    let p = if p.is_finite() { p.clamp(0.0, 100.0) } else { 50.0 };
     let idx = ((p / 100.0) * (v.len() - 1) as f64).round() as usize;
     v[idx.min(v.len() - 1)]
 }
@@ -182,8 +189,8 @@ struct PassTimer {
     query_set: wgpu::QuerySet,
     resolve_buf: wgpu::Buffer,
     readback_buf: Arc<wgpu::Buffer>,
-    pending: Arc<AtomicBool>,
-    samples_ms: Arc<Mutex<Vec<f64>>>,
+    pending: Arc<ReadbackGate>,
+    samples_ms: Arc<Mutex<VecDeque<f64>>>,
     period_ns: f32,
 }
 
@@ -210,8 +217,8 @@ impl PassTimer {
             query_set,
             resolve_buf,
             readback_buf,
-            pending: Arc::new(AtomicBool::new(false)),
-            samples_ms: Arc::new(Mutex::new(Vec::new())),
+            pending: Arc::new(ReadbackGate::default()),
+            samples_ms: Arc::new(Mutex::new(VecDeque::new())),
             period_ns,
         }
     }
@@ -234,7 +241,7 @@ impl PassTimer {
 
     /// Encode resolve+copy (only when no readback is already in flight).
     fn arm(&self, encoder: &mut wgpu::CommandEncoder) {
-        if !self.pending.load(Ordering::Relaxed) {
+        if self.pending.arm() {
             encoder.resolve_query_set(&self.query_set, 0..2, &self.resolve_buf, 0);
             encoder.copy_buffer_to_buffer(&self.resolve_buf, 0, &self.readback_buf, 0, 16);
         }
@@ -243,7 +250,7 @@ impl PassTimer {
     /// After submit: if this frame's resolve rode along, start the async
     /// map whose callback banks the sample a frame or two later.
     fn kick_readback(&self) {
-        if !self.pending.swap(true, Ordering::Relaxed) {
+        if self.pending.begin_mapping() {
             let samples = self.samples_ms.clone();
             let pending = self.pending.clone();
             let buf_submit = self.readback_buf.clone();
@@ -259,19 +266,21 @@ impl PassTimer {
                             let hi = u64::from_le_bytes(range[8..16].try_into().unwrap());
                             if hi > lo {
                                 let ms = (hi - lo) as f64 * period as f64 / 1.0e6;
-                                samples.lock().unwrap().push(ms);
+                                let mut samples = samples.lock().unwrap();
+                                if samples.len() == 4096 { samples.pop_front(); }
+                                samples.push_back(ms);
                             }
                         }
                         buf_cb.unmap();
                     }
-                    pending.store(false, Ordering::Relaxed);
+                    pending.complete();
                 });
         }
     }
 
     fn drain(&self) -> Vec<f64> {
         let mut s = self.samples_ms.lock().unwrap();
-        std::mem::take(&mut *s)
+        s.drain(..).collect()
     }
 }
 
@@ -387,7 +396,7 @@ struct GpuCull {
     uniform_buf: wgpu::Buffer,
     args_buf: wgpu::Buffer,
     readback_buf: Arc<wgpu::Buffer>,
-    pending: Arc<AtomicBool>,
+    pending: Arc<ReadbackGate>,
     snapshot: Arc<Mutex<Option<(usize, u64)>>>, // (tiles drawn, terrain tris)
     timer: Option<PassTimer>,
 }
@@ -397,7 +406,7 @@ impl GpuCull {
     /// (the PassTimer discipline: a mapped buffer cannot be a copy
     /// target).
     fn arm_readback(&self, encoder: &mut wgpu::CommandEncoder, bytes: u64) {
-        if !self.pending.load(Ordering::Relaxed) {
+        if self.pending.arm() {
             encoder.copy_buffer_to_buffer(&self.args_buf, 0, &self.readback_buf, 0, bytes);
         }
     }
@@ -405,7 +414,7 @@ impl GpuCull {
     /// After submit: map the readback and decode (tiles drawn, terrain
     /// triangles) into the snapshot the ledger reads.
     fn kick_readback(&self) {
-        if !self.pending.swap(true, Ordering::Relaxed) {
+        if self.pending.begin_mapping() {
             let pending = self.pending.clone();
             let snapshot = self.snapshot.clone();
             let buf_submit = self.readback_buf.clone();
@@ -429,7 +438,7 @@ impl GpuCull {
                         }
                         buf_cb.unmap();
                     }
-                    pending.store(false, Ordering::Relaxed);
+                    pending.complete();
                 });
         }
     }
@@ -1787,7 +1796,7 @@ impl Renderer {
                 uniform_buf,
                 args_buf,
                 readback_buf,
-                pending: Arc::new(AtomicBool::new(false)),
+                pending: Arc::new(ReadbackGate::default()),
                 snapshot: Arc::new(Mutex::new(None)),
                 timer,
             })

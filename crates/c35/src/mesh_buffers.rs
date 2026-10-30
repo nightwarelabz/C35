@@ -17,34 +17,47 @@ pub(crate) struct MeshBuffers {
 }
 
 fn capacity(required: u64, limit: u64) -> u64 {
-    assert!(required <= limit, "mesh exceeds the device buffer size limit");
+    assert!(
+        required <= limit,
+        "mesh exceeds the device buffer size limit"
+    );
     required.max(256).next_power_of_two().min(limit)
 }
 
 impl MeshBuffers {
     pub fn upload(
-        slot: &mut Option<Self>, device: &Device, queue: &Queue,
-        vertices: &[u8], indices: &[u32], stats: &mut MeshUploadStats,
+        slot: &mut Option<Self>,
+        device: &Device,
+        queue: &Queue,
+        vertices: &[u8],
+        indices: &[u32],
+        stats: &mut MeshUploadStats,
     ) -> u64 {
         if vertices.is_empty() || indices.is_empty() {
             *slot = None;
             return 0;
         }
-        assert!(indices.len() <= u32::MAX as usize, "mesh index count exceeds u32");
+        assert!(
+            indices.len() <= u32::MAX as usize,
+            "mesh index count exceeds u32"
+        );
         let vb = vertices.len() as u64;
         let ib = std::mem::size_of_val(indices) as u64;
         let limit = device.limits().max_buffer_size;
         let mut allocate = |label, bytes, usage| {
             stats.buffer_allocations += 1;
             device.create_buffer(&BufferDescriptor {
-                label: Some(label), size: capacity(bytes, limit),
-                usage: usage | BufferUsages::COPY_DST, mapped_at_creation: false,
+                label: Some(label),
+                size: capacity(bytes, limit),
+                usage: usage | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             })
         };
         let mesh = slot.get_or_insert_with(|| Self {
             vertices: allocate("dynamic mesh vertices", vb, BufferUsages::VERTEX),
             indices: allocate("dynamic mesh indices", ib, BufferUsages::INDEX),
-            count: 0, index_data: Vec::new(),
+            count: 0,
+            index_data: Vec::new(),
         });
         if mesh.vertices.size() < vb {
             mesh.vertices = allocate("dynamic mesh vertices", vb, BufferUsages::VERTEX);

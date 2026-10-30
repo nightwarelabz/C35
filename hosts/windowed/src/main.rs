@@ -253,7 +253,7 @@ impl App {
         let elapsed = now - self.last_frame;
         let wall_ms = elapsed.as_secs_f64() * 1000.0;
         let ticks = self.clock.advance(elapsed);
-        let dt = ticks.ticks.len() as f32 * self.clock.step_seconds();
+        let dt = (ticks.ticks.end - ticks.ticks.start) as f32 * self.clock.step_seconds();
         self.last_frame = now;
         self.frame_ema_ms = if self.frame_ema_ms == 0.0 {
             wall_ms
