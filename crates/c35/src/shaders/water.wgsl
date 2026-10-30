@@ -74,25 +74,28 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     let dist = length(to_cam);
     let view_dir = to_cam / max(dist, 0.001);
 
-    // M6 PS1.5: the wave/ice noise fields sample the same snapped
-    // texel grid as the terrain (see terrain.wgsl) — one surface
-    // regime across land and sea. The mix is exact at 0.0 in classic
-    // mode, so classic water is bit-identical.
-    let snapped = vec3<f32>(floor(wp.x / 1.25) * 1.25, wp.y, floor(wp.z / 1.25) * 1.25);
-    let wpg = mix(wp, snapped, step(0.5, u.present.x));
+    // PS1.5 does not snap this domain. The terrain's 1.25 m texel
+    // grid (terrain.wgsl) is an albedo regime: it re-samples a slowly
+    // varying colour. The sea's colour IS its normal (fresnel of the
+    // shared sky), so the same snap was a flat mirror per cell —
+    // doorway-sized tiles of horizon colour, the Minecraft read on
+    // the night hero and the operator-study shore. The palette grade
+    // and the nearest presentation still chunk the water. Classic
+    // never snapped, so this is a PS1.5-only change; the wave
+    // function below is the one both modes now share.
 
     let ice = u.water_p.x;
     let wave_scale = u.water_p.y;
     // Time itself slows as the sea freezes; amplitude dies with it.
     let t = u.misc.x * wave_scale;
     let amp = mix(1.0, 0.22, ice);
-    var n = water_normal(wpg.xz, t, dist, amp);
+    var n = water_normal(wp.xz, t, dist, amp);
     if (ice > 0.01) {
         // M3: frozen water is not a mirror. As the amp dies the normal
         // field goes uniform and the sun glint smeared into wind-stripes
         // (M2 leftover) — so ice roughens the normal with its own grain
         // and the glint breaks into sparkle over the sheet instead.
-        let ig = noise_grad(wpg.xz * 0.85 + 2.3);
+        let ig = noise_grad(wp.xz * 0.85 + 2.3);
         n = normalize(n + vec3<f32>(-ig.x, 0.0, -ig.y) * 0.35 * ice);
     }
 
@@ -122,12 +125,12 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     // Ice sheet: patchy by large-scale noise, sheeting over as the ice
     // factor grows — pale, hard-glinting, nearly matte between patches.
     if (ice > 0.01) {
-        let ice_patch = smoothstep(0.78 - ice * 0.45, 0.92 - ice * 0.35, vnoise(wpg.xz * 0.045 + 3.7));
+        let ice_patch = smoothstep(0.78 - ice * 0.45, 0.92 - ice * 0.35, vnoise(wp.xz * 0.045 + 3.7));
         let ice_col = vec3<f32>(0.62, 0.70, 0.78) * (0.35 + 0.65 * u.water_p.w)
             + u.amb_sky.rgb * 0.5;
         var iced = ice_col;
         // The sheet's glint is noise-broken too: no clean band survives.
-        let glint_break = 0.35 + 0.65 * vnoise(wpg.xz * 1.4) * vnoise(wpg.xz * 0.23 + 8.1);
+        let glint_break = 0.35 + 0.65 * vnoise(wp.xz * 1.4) * vnoise(wp.xz * 0.23 + 8.1);
         iced += u.sun_color.rgb * pow(ndh, 260.0) * 1.4 * shadow * glint_break;
         iced += u.moon_color.rgb * pow(mndh, 260.0) * 0.8 * glint_break;
         iced += sky * 0.18;

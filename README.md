@@ -284,9 +284,12 @@ stealth-action immersive sim) and its chosen register:
   preserved), the history resolve runs at that same presentation
   resolution (the mode is a register, not an upsampling trick), and
   the blit samples **nearest** — a crisp texel grid on the output.
-  Surfaces re-express through the palette discipline: terrain and
-  water detail fields sample a 1.25-unit snapped texel grid, and
-  every scene fragment exits through a palette grade — 20 steps per
+  Surfaces re-express through the palette discipline: terrain detail
+  fields sample a 1.25-unit snapped texel grid. Water normals are
+  not on that grid — snapping the wave domain turned the sea into
+  flat mirrors a doorway across; the palette and the nearest
+  presentation are what chunk the water. Every scene fragment exits
+  through a palette grade — 20 steps per
   channel in sqrt space, ordered-dithered 4×4 Bayer so the steps
   break into texture instead of banding. Fog density becomes a look
   parameter (default ×2.0 — the reality layer's density, multiplied
