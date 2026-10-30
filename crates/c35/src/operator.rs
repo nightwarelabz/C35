@@ -88,7 +88,7 @@ pub struct OperatorVertex {
 // ---------------------------------------------------------------------
 
 /// Atlas regions as pixel rects (x, y, w, h) in the 256² atlas.
-mod region {
+pub mod region {
     pub const CAMO: (u32, u32, u32, u32) = (0, 0, 128, 128);
     pub const VEST: (u32, u32, u32, u32) = (128, 0, 64, 64);
     pub const FABRIC: (u32, u32, u32, u32) = (192, 0, 64, 48);
@@ -101,9 +101,18 @@ mod region {
     pub const LEATHER: (u32, u32, u32, u32) = (128, 160, 64, 32);
     pub const PLASTIC: (u32, u32, u32, u32) = (192, 160, 64, 32);
     pub const STRAP: (u32, u32, u32, u32) = (0, 192, 64, 32);
+    // Slice 1 extension (DeBrief): regions painted into texels the
+    // operator never used, for the second figure on this skeleton —
+    // the Regime soldier. The operator's own regions are untouched
+    // (his pixels are proven unchanged by frame comparison; only the
+    // whole-atlas checksum moves).
+    pub const COAT: (u32, u32, u32, u32) = (64, 192, 96, 64);
+    pub const ARMBAND: (u32, u32, u32, u32) = (128, 96, 64, 32);
+    pub const MASK: (u32, u32, u32, u32) = (160, 192, 48, 48);
+    pub const REDCLOTH: (u32, u32, u32, u32) = (208, 192, 48, 32);
 }
 
-fn uv_rect(r: (u32, u32, u32, u32)) -> [f32; 4] {
+pub fn uv_rect(r: (u32, u32, u32, u32)) -> [f32; 4] {
     let s = ATLAS_SIZE as f32;
     [
         r.0 as f32 / s,
@@ -252,6 +261,64 @@ fn paint_patch(a: &mut Atlas) {
     }
 }
 
+/// The soldier's surfaces (Slice 1), painted into the atlas's
+/// previously-unused texels — the greatcoat's woven checker, the
+/// armband's three bars, the mask's vent slits, plain red cloth.
+/// Same doctrine as the patch: surface art meant to read at patrol
+/// distance.
+fn paint_soldier_regions(a: &mut Atlas) {
+    // COAT: near-black cloth with a fine woven checker (2px weave,
+    // two close values) and noise — the greatcoat's weight is in
+    // the weave, per the canon's close-up.
+    let r = region::COAT;
+    a.rect(r, [16, 16, 18]);
+    for y in r.1..r.1 + r.3 {
+        for x in r.0..r.0 + r.2 {
+            if (x / 2 + y / 2) % 2 == 0 {
+                a.set(x, y, [21, 21, 24]);
+            }
+        }
+    }
+    let mut rng = Rng::new(0xC0A7_0001);
+    for y in r.1..r.1 + r.3 {
+        for x in r.0..r.0 + r.2 {
+            let i = ((y * ATLAS_SIZE + x) * 4) as usize;
+            for k in 0..3 {
+                let v = a.px[i + k] as i32 + rng.jitter(3);
+                a.px[i + k] = v.clamp(0, 255) as u8;
+            }
+        }
+    }
+    // ARMBAND: deep-red field, three white vertical bars (Order,
+    // Unity, Silence), dark edge stitching. Painted like the patch:
+    // the mark must read before the man does.
+    let r = region::ARMBAND;
+    a.rect(r, [152, 30, 34]);
+    a.rect((r.0, r.1, r.2, 2), [84, 17, 21]);
+    a.rect((r.0, r.1 + r.3 - 2, r.2, 2), [84, 17, 21]);
+    for i in 0..3 {
+        a.rect((r.0 + 14 + i * 15, r.1 + 5, 8, r.3 - 10), [226, 224, 218]);
+    }
+    let mut rng = Rng::new(0xA12B_0002);
+    for y in r.1..r.1 + r.3 {
+        for x in r.0..r.0 + r.2 {
+            let i = ((y * ATLAS_SIZE + x) * 4) as usize;
+            for k in 0..3 {
+                let v = a.px[i + k] as i32 + rng.jitter(4);
+                a.px[i + k] = v.clamp(0, 255) as u8;
+            }
+        }
+    }
+    // MASK: pale warm grey, fine speckle, two dark vertical vent
+    // slits low in the plate — the only "features" the face carries.
+    let r = region::MASK;
+    a.cloth(r, [168, 162, 150], 5, None, 0xAA5C_0003);
+    a.rect((r.0 + 17, r.1 + 28, 4, 13), [38, 36, 33]);
+    a.rect((r.0 + 27, r.1 + 28, 4, 13), [38, 36, 33]);
+    // REDCLOTH: the pauldron's plain red, slightly sun-faded noise.
+    a.cloth(region::REDCLOTH, [154, 34, 38], 6, None, 0xBED0_0004);
+}
+
 /// Paint the whole atlas. Deterministic: same pixels on every host,
 /// every run (a proof in the operator probe compares a checksum).
 pub fn generate_atlas() -> Vec<u8> {
@@ -334,6 +401,7 @@ pub fn generate_atlas() -> Vec<u8> {
     a.cloth(region::LEATHER, [22, 19, 15], 5, None, 0xCA35_0008);
     a.cloth(region::PLASTIC, [12, 13, 15], 3, None, 0xCA35_0009);
     a.cloth(region::STRAP, [33, 34, 39], 4, None, 0xCA35_000A);
+    paint_soldier_regions(&mut a);
     a.px
 }
 
@@ -1012,7 +1080,76 @@ pub fn build_operator(
 /// skinning (rigid, per bone) then placement (position + yaw + the
 /// frame's root offset). The feet plant at `ground_y` — the caller
 /// reads the terrain height.
+///
+/// The operator is one figure on the part system; this builds him
+/// through [`build_figure_frame`], the shared figure builder every
+/// character on this skeleton uses.
 pub fn build_operator_frame(
+    frame: &PoseFrame,
+    spot: Vec3,
+    ground_y: f32,
+    yaw_deg: f32,
+) -> OperatorMesh {
+    let specs: Vec<PartSpec> = parts()
+        .iter()
+        .map(|p| PartSpec {
+            name: p.name,
+            bone: p.bone,
+            center: p.center,
+            size: p.size,
+            uv: uv_rect(p.region),
+            mat: p.mat,
+        })
+        .collect();
+    let (corners, bone) = patch_quad();
+    let uv = uv_rect(region::PATCH);
+    let patch = QuadSpec {
+        name: "NSA shoulder patch (quad)",
+        bone,
+        corners,
+        normal: Vec3::new(-1.0, 0.0, 0.0),
+        // Corners are listed TL(front), TL(back), BL(back), BL(front);
+        // art-left is toward his front (+Z local).
+        uvs: [[uv[0], uv[1]], [uv[2], uv[1]], [uv[2], uv[3]], [uv[0], uv[3]]],
+        mat: MAT_STANDARD,
+    };
+    build_figure_frame(&specs, &[patch], frame, spot, ground_y, yaw_deg)
+}
+
+/// A figure part, as data: one box in bind-pose local space, bound
+/// to one bone, surfaced from one precomputed atlas rect. This is
+/// the public form of the operator's private part list — the seam
+/// through which OTHER figures are built on the same skeleton (the
+/// DeBrief soldier is the first): same bones, same PoseFrame in,
+/// same OperatorMesh out.
+pub struct PartSpec {
+    pub name: &'static str,
+    pub bone: Bone,
+    pub center: Vec3,
+    pub size: Vec3,
+    pub uv: [f32; 4],
+    pub mat: f32,
+}
+
+/// A figure quad, as data: four bind-pose corners on one bone with
+/// per-corner UVs and a bind-pose normal (the shoulder patch is the
+/// operator's instance; insignia and marks are the general case).
+pub struct QuadSpec {
+    pub name: &'static str,
+    pub bone: Bone,
+    pub corners: [Vec3; 4],
+    pub normal: Vec3,
+    pub uvs: [[f32; 2]; 4],
+    pub mat: f32,
+}
+
+/// Build any figure on the shared skeleton from part/quad data and
+/// a pose frame: rigid per-bone skinning, then placement — the
+/// exact emission path the operator has always used (his staged
+/// frames hash-compare against M6/M7 to prove it).
+pub fn build_figure_frame(
+    parts: &[PartSpec],
+    quads: &[QuadSpec],
     frame: &PoseFrame,
     spot: Vec3,
     ground_y: f32,
@@ -1025,9 +1162,9 @@ pub fn build_operator_frame(
     let mut indices: Vec<u32> = Vec::new();
     let mut infos: Vec<PartInfo> = Vec::new();
 
-    for p in parts() {
+    for p in parts {
         let m = root * mats[p.bone.idx()];
-        let uv = uv_rect(p.region);
+        let uv = p.uv;
         let half = p.size * 0.5;
         let base = vertices.len() as u32;
         for (n, corners) in FACES {
@@ -1067,37 +1204,26 @@ pub fn build_operator_frame(
         });
     }
 
-    // The patch quad (own UV orientation; see patch_quad()).
-    {
-        let (corners, bone) = patch_quad();
-        let m = root * mats[bone.idx()];
-        let uv = uv_rect(region::PATCH);
+    for q in quads {
+        let m = root * mats[q.bone.idx()];
         let nrm = m
-            .transform_vector3(Vec3::new(-1.0, 0.0, 0.0))
+            .transform_vector3(q.normal)
             .normalize()
             .to_array();
         let base = vertices.len() as u32;
-        // Corners are listed TL(front), TL(back), BL(back), BL(front);
-        // art-left is toward his front (+Z local).
-        let quad_uv = [
-            [uv[0], uv[1]],
-            [uv[2], uv[1]],
-            [uv[2], uv[3]],
-            [uv[0], uv[3]],
-        ];
-        for (ci, c) in corners.iter().enumerate() {
+        for (ci, c) in q.corners.iter().enumerate() {
             let world = m.transform_point3(*c);
             vertices.push(OperatorVertex {
                 position: world.to_array(),
                 normal: nrm,
-                uv: quad_uv[ci],
-                mat: MAT_STANDARD,
+                uv: q.uvs[ci],
+                mat: q.mat,
             });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         infos.push(PartInfo {
-            name: "NSA shoulder patch (quad)",
-            bone,
+            name: q.name,
+            bone: q.bone,
             triangles: 2,
         });
     }

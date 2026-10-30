@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/c35", "hosts/native", "hosts/web", "hosts/windowed"]
+members = ["crates/c35", "hosts/native", "hosts/web", "hosts/windowed", "hosts/debrief"]
 
 [profile.release]
 opt-level = 3

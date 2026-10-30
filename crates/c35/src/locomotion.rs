@@ -248,6 +248,12 @@ pub struct Animator {
     leg_yaw: [f32; 2],
     ground_y: f32,
     ground_init: bool,
+    /// The ground the figure walks on. None (the default) is the
+    /// vista's island heightfield — the behaviour every proof to
+    /// date measured. A host walking a figure somewhere the island
+    /// is not (DeBrief's flat street) installs its own ground
+    /// function through `set_ground_fn`; the solver is unchanged.
+    ground_fn: Option<fn(f32, f32) -> f32>,
 }
 
 impl Default for Animator {
@@ -268,7 +274,14 @@ impl Animator {
             leg_yaw: [0.0, 0.0],
             ground_y: 0.0,
             ground_init: false,
+            ground_fn: None,
         }
+    }
+
+    /// Install a ground function (see the field's note). Passing
+    /// None restores the island heightfield.
+    pub fn set_ground_fn(&mut self, f: Option<fn(f32, f32) -> f32>) {
+        self.ground_fn = f;
     }
 
     /// The animator's smoothed ground reference — the height the
@@ -306,6 +319,16 @@ impl Animator {
     /// Advance the animation by `dt` and produce the pose frame.
     pub fn update(&mut self, dt: f32, input: &AnimInput) -> PoseFrame {
         let dt = dt.clamp(0.0, 0.1);
+        // The ground sample, dispatched once into a local: the leg
+        // loop below holds &mut borrows into self, so sampling must
+        // not borrow self (the island's height_at never did).
+        let ground_fn = self.ground_fn;
+        let ground = |x: f32, z: f32| -> f32 {
+            match ground_fn {
+                Some(f) => f(x, z),
+                None => height_at(x, z),
+            }
+        };
         // Blend states chase their targets at professional rates:
         // aim snaps in a sixth of a second, the slide commits faster
         // than it releases.
@@ -352,7 +375,7 @@ impl Animator {
         // step during the stance that made it, instead of folding
         // double under a plant left above the hip (the probe's
         // ring-crossing fold, shin at +170°).
-        let mut ground_target = height_at(input.pos.x, input.pos.z);
+        let mut ground_target = ground(input.pos.x, input.pos.z);
         for leg in &self.legs {
             if leg.contact && leg.plant_ground > ground_target {
                 ground_target = leg.plant_ground;
@@ -411,7 +434,7 @@ impl Animator {
             if !leg.init {
                 // First sight of this leg: plant it under the hip.
                 let p = input.pos + Vec3::new(left_dir.x * hip_lat, 0.0, left_dir.y * hip_lat);
-                leg.plant_ground = height_at(p.x, p.z);
+                leg.plant_ground = ground(p.x, p.z);
                 leg.plant = clamp_reach(Vec3::new(p.x, leg.plant_ground + ANKLE_HEIGHT, p.z));
                 leg.init = true;
             }
@@ -426,7 +449,7 @@ impl Animator {
                         0.0,
                         fwd.y * reach + left_dir.y * hip_lat,
                     );
-                leg.plant_ground = height_at(p.x, p.z);
+                leg.plant_ground = ground(p.x, p.z);
                 leg.plant = clamp_reach(Vec3::new(p.x, leg.plant_ground + ANKLE_HEIGHT, p.z));
             }
             leg.contact = in_contact;
@@ -460,7 +483,7 @@ impl Animator {
                     );
                 clamp_reach(Vec3::new(
                     p.x,
-                    height_at(p.x, p.z)
+                    ground(p.x, p.z)
                         + ANKLE_HEIGHT
                         + clearance * (std::f32::consts::PI * u).sin(),
                     p.z,
@@ -474,7 +497,7 @@ impl Animator {
             let mk = |fwd_d: f32, lat: f32, lift: f32| -> Vec3 {
                 let p = input.pos
                     + Vec3::new(fwd.x * fwd_d + left_dir.x * lat, 0.0, fwd.y * fwd_d + left_dir.y * lat);
-                clamp_reach(Vec3::new(p.x, height_at(p.x, p.z) + ANKLE_HEIGHT + lift, p.z))
+                clamp_reach(Vec3::new(p.x, ground(p.x, p.z) + ANKLE_HEIGHT + lift, p.z))
             };
             let lead_t = mk(0.66, HIP_HALF, 0.0);
             let trail_t = mk(-0.36, -HIP_HALF, 0.10);

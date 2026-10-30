@@ -1,0 +1,10 @@
+[package]
+name = "debrief"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "DeBrief — Slice 1 host: one Greyport block on the C35 engine (headless proof runner)."
+
+[dependencies]
+c35 = { path = "../../crates/c35" }
+image = { version = "0.25", default-features = false, features = ["png"] }
