@@ -52,6 +52,7 @@ pub mod modding;
 pub mod noise;
 pub mod operator;
 pub mod perception;
+pub mod persist;
 pub mod props;
 pub mod scene;
 pub mod sound;
