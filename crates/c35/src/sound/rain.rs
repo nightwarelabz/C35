@@ -12,7 +12,9 @@
 //! and a later zero only silences the gain.
 //!
 //! Deterministic: the same mixer seed and the same intensity
-//! sequence render the same PCM. No wall clock.
+//! sequence render the same PCM. No wall clock. The drip schedule
+//! is a `u64` sample counter, not an f32 timer, so a long session
+//! does not run fast and then freeze.
 
 use crate::sound::mixer::Mixer;
 use crate::sound::synth::{Lowpass, Rng, VoiceGen};
@@ -24,34 +26,67 @@ pub const PEAK_GAIN: f32 = 0.55;
 /// How long one near-field drop rings, in seconds.
 const DRIP_SECONDS: f32 = 0.018;
 
+/// Seconds → samples, at least one. The drip clock is this integer,
+/// never an f32 second-counter: past ~256 s an f32 time base runs
+/// fast, and past ~512 s (`1/44100` falls below half an ulp) it
+/// stops advancing and the drips stop for good.
+fn samples_from_seconds(seconds: f32, sample_rate: u32) -> u64 {
+    let n = (seconds * sample_rate as f32).round() as u64;
+    n.max(1)
+}
+
 /// Infinite rain. `next` is always `Some`.
 pub struct RainLoop {
     rng: Rng,
     hiss: Lowpass,
     body: Lowpass,
-    t: f32,
-    next_drip: f32,
-    drip_left: f32,
+    /// Samples rendered. The only clock.
+    sample: u64,
+    /// Sample index at which the next drip arms.
+    next_drip_sample: u64,
+    /// Samples of ring still to play. Zero means silent.
+    drip_left: u64,
+    drip_len: u64,
     drip_freq: f32,
+    /// Phase in cycles, wrapped to [0, 1). It does not grow with
+    /// the session, so f32 is exact enough here.
     drip_phase: f32,
     sample_rate: f32,
+    rate_u: u32,
+    drips_started: u64,
+    last_drip_sample: u64,
 }
 
 impl RainLoop {
     pub fn new(seed: u64, sample_rate: f32) -> RainLoop {
+        let rate_u = sample_rate.max(1.0) as u32;
         let mut rng = Rng::new(seed);
-        let next_drip = 0.02 + rng.next_f32() * 0.05;
+        let first = 0.02 + rng.next_f32() * 0.05;
         RainLoop {
             rng,
             hiss: Lowpass::new(1800.0, sample_rate),
             body: Lowpass::new(420.0, sample_rate),
-            t: 0.0,
-            next_drip,
-            drip_left: 0.0,
+            sample: 0,
+            next_drip_sample: samples_from_seconds(first, rate_u),
+            drip_left: 0,
+            drip_len: samples_from_seconds(DRIP_SECONDS, rate_u),
             drip_freq: 1200.0,
             drip_phase: 0.0,
             sample_rate,
+            rate_u,
+            drips_started: 0,
+            last_drip_sample: 0,
         }
+    }
+
+    /// How many drips have armed. The ten-minute test reads this.
+    pub fn drips_started(&self) -> u64 {
+        self.drips_started
+    }
+
+    /// Sample index of the most recent drip arm, or 0 if none yet.
+    pub fn last_drip_sample(&self) -> u64 {
+        self.last_drip_sample
     }
 }
 
@@ -61,19 +96,24 @@ impl VoiceGen for RainLoop {
         let hiss = self.hiss.process(white);
         let body = self.body.process(white);
         let mut drip = 0.0;
-        if self.drip_left > 0.0 {
-            let env = (self.drip_left / DRIP_SECONDS).clamp(0.0, 1.0);
+        if self.drip_left > 0 {
+            let env = (self.drip_left as f32 / self.drip_len as f32).clamp(0.0, 1.0);
             drip = (self.drip_phase * std::f32::consts::TAU).sin() * env;
             self.drip_phase = (self.drip_phase + self.drip_freq / self.sample_rate) % 1.0;
-            self.drip_left -= 1.0 / self.sample_rate;
-        } else if self.t >= self.next_drip {
-            self.drip_left = DRIP_SECONDS;
+            self.drip_left -= 1;
+        } else if self.sample >= self.next_drip_sample {
+            // Arm on this sample; the ring is audible from the next
+            // one (sin of phase 0 is silence anyway). The gap until
+            // the following drip is a sample countdown from here.
+            self.drip_left = self.drip_len;
             self.drip_phase = 0.0;
             self.drip_freq = 900.0 + self.rng.next_f32() * 1600.0;
-            // A few drops a second up close. The hiss carries the rest.
-            self.next_drip = self.t + 0.035 + self.rng.next_f32() * 0.11;
+            let gap = 0.035 + self.rng.next_f32() * 0.11;
+            self.next_drip_sample = self.sample + samples_from_seconds(gap, self.rate_u);
+            self.drips_started += 1;
+            self.last_drip_sample = self.sample;
         }
-        self.t += 1.0 / self.sample_rate;
+        self.sample += 1;
         Some((body * 0.62 + hiss * 0.28 + drip * 0.40).clamp(-1.0, 1.0))
     }
 }
@@ -81,15 +121,27 @@ impl VoiceGen for RainLoop {
 /// The host-facing bed. One slot, gain tracked to a 0–1 rain rate.
 pub struct RainBed {
     attached: bool,
+    /// `play_sticky` was refused because the bus was full. Latched:
+    /// later calls do not retry, so a full mixer does not record a
+    /// fresh drop every frame.
+    refused: bool,
 }
 
 impl RainBed {
     pub fn new() -> RainBed {
-        RainBed { attached: false }
+        RainBed {
+            attached: false,
+            refused: false,
+        }
     }
 
     pub fn attached(&self) -> bool {
         self.attached
+    }
+
+    /// True once the bus has refused the slot. Stays true.
+    pub fn refused(&self) -> bool {
+        self.refused
     }
 
     /// Drive the bed. `rain` is 0 (dry) to 1 (downpour). A weather
@@ -98,6 +150,9 @@ impl RainBed {
     /// the mixer.
     pub fn set_intensity(&mut self, mixer: &mut Mixer, rain: f32) {
         let rain = rain.clamp(0.0, 1.0);
+        if self.refused {
+            return;
+        }
         if rain == 0.0 && !self.attached {
             return;
         }
@@ -105,6 +160,7 @@ impl RainBed {
             let sr = mixer.sample_rate() as f32;
             let seed = mixer.next_seed();
             if !mixer.play_sticky(Box::new(RainLoop::new(seed, sr)), VoiceKind::Rain, 0.0) {
+                self.refused = true;
                 return;
             }
             self.attached = true;
@@ -213,15 +269,47 @@ mod tests {
     }
 
     #[test]
-    fn one_second_of_rain_is_cheap_on_the_cpu() {
-        // A bound, not a benchmark trophy: one second of stereo rain
-        // in a debug build stays well under a frame budget's worth of
-        // CPU. Release is faster. If this fails, the bed grew a loop
-        // it should not have.
-        let t0 = std::time::Instant::now();
-        let pcm = render(1, 1.0, SAMPLE_RATE as usize);
-        let ms = t0.elapsed().as_secs_f64() * 1000.0;
-        assert_eq!(pcm.len(), SAMPLE_RATE as usize * 2);
-        assert!(ms < 200.0, "{ms} ms for 1s of rain (debug)");
+    fn a_full_bus_is_refused_once() {
+        use crate::sound::StemKind;
+        let mut mixer = Mixer::new(SAMPLE_RATE, 4);
+        for i in 0..MAX_VOICES {
+            mixer.play_stem(
+                StemKind::Stealth,
+                Box::new(RainLoop::new(50 + i as u64, SAMPLE_RATE as f32)),
+            );
+        }
+        assert_eq!(mixer.ledger().dropped, 0);
+        let mut bed = RainBed::new();
+        for _ in 0..40 {
+            bed.set_intensity(&mut mixer, 1.0);
+        }
+        assert!(bed.refused());
+        assert!(!bed.attached());
+        assert_eq!(mixer.ledger().dropped, 1);
+    }
+
+    #[test]
+    fn drips_continue_through_ten_minutes() {
+        let rate = SAMPLE_RATE;
+        let mut rain = RainLoop::new(5, rate as f32);
+        let total = rate as u64 * 60 * 10;
+        let mut n = 0u64;
+        while n < total {
+            let _ = rain.next();
+            n += 1;
+        }
+        let started = rain.drips_started();
+        // A few drops a second across the whole run, not a burst
+        // at the start and then silence.
+        assert!(
+            (2_000..20_000).contains(&started),
+            "drips in 10 min: {started}"
+        );
+        let tail = total - rate as u64 * 30;
+        assert!(
+            rain.last_drip_sample() >= tail,
+            "last drip at sample {}, wanted >= {tail}",
+            rain.last_drip_sample()
+        );
     }
 }

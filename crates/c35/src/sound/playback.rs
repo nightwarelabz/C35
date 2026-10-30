@@ -188,13 +188,8 @@ impl Playback {
     pub fn render_ambient_churr(&mut self) {
         let sr = self.mixer.sample_rate() as f32;
         let seed = self.mixer.next_seed();
-        self.mixer.play(
-            voices::churr_voice(seed, sr),
-            VoiceKind::Churr,
-            0.35,
-            0.0,
-            false,
-        );
+        self.mixer
+            .play(voices::churr_voice(seed, sr), VoiceKind::Churr, 0.35, 0.0, false);
     }
 
     /// Render `frames` stereo frames (interleaved L,R),

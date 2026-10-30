@@ -23,9 +23,14 @@ second of the mix. Pass a path to write the file somewhere else.
 The same command writes the same bytes.
 
 A debug run of that probe: drizzle RMS 0.010, downpour RMS 0.042,
-dry RMS 0, and one second of stereo mix in 3.64 ms of CPU. The
-unit test only guards the loose bound (under 200 ms in debug) so a
-busy machine does not fail it. Release is the number to keep.
+dry RMS 0, and one second of stereo mix in 3.64 ms of CPU. That
+timing is the probe's printout, not a test: a wall-clock bound
+does not belong in CI.
+
+The drip clock is a `u64` sample counter. An f32 second-counter
+runs fast after about 256 s and stops after about 512 s. If the
+mixer is already full when the bed first asks for a slot, the
+refusal is latched and later frames do not log another drop.
 
 From a host that already owns a `Playback`:
 
