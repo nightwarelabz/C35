@@ -35,8 +35,9 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> BlitOut {
 @fragment
 fn fs_main(in: BlitOut) -> @location(0) vec4<f32> {
     let col = textureSample(scene_tex, scene_sampler, in.uv).rgb;
-    // Lamp bloom: the halo adds, never replaces — 0.55 keeps lamp
-    // cores hot without washing the street around them.
+    // Lamp bloom: the halo adds, never replaces — 0.62 (0.55 before
+    // push 2, whose hotter lamp cores earn a slightly stronger
+    // halo) keeps them hot without washing the street around them.
     let halo = textureSample(bloom_tex, bloom_samp, in.uv).rgb;
-    return vec4<f32>(col + halo * 0.55, 1.0);
+    return vec4<f32>(col + halo * 0.62, 1.0);
 }

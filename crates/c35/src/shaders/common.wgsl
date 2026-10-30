@@ -68,10 +68,13 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     // it exists only in the dark (water_p.w is daylight) and the fog
     // the fog pass lays over it is the same fog as everything else.
     if (u.present.x > 0.5) {
-        let lamps = 0.45 + 0.55 * vnoise(vec2<f32>(dir.x * 9.0 + dir.z * 7.0, 3.0));
+        // Push 2: the lump contrast calms (0.62 + 0.38 n, was
+        // 0.45 + 0.55 n) — mirrored in the sea, the old contrast
+        // resolved as discrete tan blotches instead of a shore.
+        let lamps = 0.62 + 0.38 * vnoise(vec2<f32>(dir.x * 9.0 + dir.z * 7.0, 3.0));
         let band = (1.0 - smoothstep(0.0, 0.09, abs(dir.y - 0.015)))
             * (1.0 - u.water_p.w) * lamps;
-        col += vec3<f32>(1.0, 0.50, 0.15) * band * 0.14;
+        col += vec3<f32>(1.0, 0.50, 0.15) * band * 0.12;
     }
     return col;
 }
@@ -130,8 +133,9 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
 // and the sun side of the fog still warms toward the glow.
 // Graphics push: a ground-haze term — fog thickens slightly for
 // fragments below the camera, so haze pools in streets and hollows
-// instead of hanging uniformly. Bounded (×1.25 max) and
-// camera-relative, so it can never void a hilltop or flood a street.
+// instead of hanging uniformly. Bounded (×1.38 max since push 2)
+// and camera-relative, so it can never void a hilltop or flood
+// a street.
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let rel = world_pos - u.cam_pos.xyz;
     let dist = length(rel);
@@ -141,10 +145,19 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     // factor. The mix is exact at 0.0, so the classic path's fog is
     // bit-for-bit the reality layer's, untouched.
     let density = u.fog.w * mix(1.0, u.present.y, step(0.5, u.present.x));
-    let below = clamp((u.cam_pos.y - world_pos.y) / 40.0, 0.0, 1.0);
-    let f = 1.0 - exp(-dist * density * (1.0 + 0.25 * below));
+    let below = clamp((u.cam_pos.y - world_pos.y) / 55.0, 0.0, 1.0);
+    let f = 1.0 - exp(-dist * density * (1.0 + 0.38 * below));
     let sun_amt = pow(max(dot(dir, u.sun_dir.xyz), 0.0), 5.0);
-    let fog_col = u.fog.rgb + u.sun_glow.rgb * sun_amt * 0.30;
+    // Graphics push 2 — graded aerial depth: the near fog keeps the
+    // reality layer's colour, sun-warmed toward the glow; with
+    // distance the fog cools and lifts toward the horizon/zenith
+    // mix, so the far field dies in steps — warm street haze near,
+    // cool air far — instead of one flat wash at every range. Down
+    // a street axis this is what separates near / mid / far.
+    let near_col = u.fog.rgb + u.sun_glow.rgb * sun_amt * 0.30;
+    let far_col = mix(u.fog.rgb, mix(u.sky_horizon.rgb, u.sky_zenith.rgb, 0.35), 0.55)
+        + u.sun_glow.rgb * sun_amt * 0.12;
+    let fog_col = mix(near_col, far_col, smoothstep(45.0, 420.0, dist));
     return mix(col, fog_col, clamp(f, 0.0, 1.0));
 }
 

@@ -49,6 +49,27 @@ fn fs_main(in: OpOut) -> @location(0) vec4<f32> {
     let moon_diff = max(dot(n, u.moon_dir.xyz), 0.0);
     var col = tex.rgb
         * (u.sun_color.rgb * wrap * shadow * 0.82 + u.moon_color.rgb * moon_diff + amb);
+    // Graphics push 2 — material separation: the atlas alpha is
+    // per-texel ROUGHNESS (painted by operator.rs; the figure's
+    // pipelines are opaque, so alpha was free). A Blinn term keyed
+    // on it gives gunmetal, brass and oiled leather a tight glint
+    // from sun and moon while cloth stays matte — the flat diffuse
+    // alone read every surface as the same stuff. The cool rim
+    // edges the silhouette against dark streets (the banner's
+    // figure read), strongest on smooth surfaces, never a glow.
+    let v = normalize(u.cam_pos.xyz - in.world_pos);
+    let rough = tex.a;
+    let spow = mix(90.0, 12.0, rough);
+    let sgain = mix(0.80, 0.06, rough);
+    let hs_o = normalize(u.sun_dir.xyz + v);
+    col += u.sun_color.rgb
+        * (pow(max(dot(n, hs_o), 0.0), spow) * sgain * shadow);
+    let hm_o = normalize(u.moon_dir.xyz + v);
+    col += u.moon_color.rgb
+        * (pow(max(dot(n, hm_o), 0.0), spow) * sgain);
+    let ndv = clamp(dot(n, v), 0.0, 1.0);
+    let rim = pow(1.0 - ndv, 3.0);
+    col += u.moon_color.rgb * rim * 0.20 * (1.0 - rough * 0.55);
     if (in.mat > 0.5) {
         // The visor: emissive accent. Its brightness rides the moon
         // key slightly (a lit face reads hotter than a turned one)

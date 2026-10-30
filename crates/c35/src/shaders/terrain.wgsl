@@ -117,7 +117,9 @@ fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f3
     col = mix(col, vec3<f32>(0.10, 0.24, 0.235), below * 0.8);
     col = mix(col, vec3<f32>(0.012, 0.085, 0.115), smoothstep(-2.5, -9.0, wp.y));
     // Fine grain over everything above water — the plastic-killer.
-    col *= 0.90 + 0.20 * grain;
+    // Push 2: a touch more contrast (0.88 + 0.24 g, was 0.90 + 0.20 g)
+    // — daylight showed the old range as a flat wash.
+    col *= 0.88 + 0.24 * grain;
     return col;
 }
 

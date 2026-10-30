@@ -288,6 +288,30 @@ impl Atlas {
             }
         }
     }
+    /// Write ONLY the alpha channel: the atlas alpha carries
+    /// per-texel ROUGHNESS for the character specular term
+    /// (graphics push 2) — 0 = polished metal, 255 = matte cloth.
+    /// The figure's pipelines are opaque (blend: None), so alpha
+    /// was a free channel: set() writes 255 on every painted
+    /// texel and no shader read it before this push. It must be
+    /// painted LAST in generate_atlas, for the same reason as the
+    /// city atlas's roughness: set() resets alpha to 255.
+    fn set_alpha(&mut self, x: u32, y: u32, v: u8) {
+        if x < ATLAS_SIZE && y < ATLAS_SIZE {
+            let i = ((y * ATLAS_SIZE + x) * 4) as usize;
+            self.px[i + 3] = v;
+        }
+    }
+    /// Fill a region's roughness channel: base ± variation noise.
+    fn rough(&mut self, r: (u32, u32, u32, u32), base: i32, var: i32, seed: u32) {
+        let mut rng = Rng::new(seed);
+        for y in r.1..r.1 + r.3 {
+            for x in r.0..r.0 + r.2 {
+                let v = (base + rng.jitter(var)).clamp(0, 255) as u8;
+                self.set_alpha(x, y, v);
+            }
+        }
+    }
 }
 
 /// The face, drawn as low-res surface art in the deleted patch's
@@ -635,6 +659,33 @@ pub fn generate_atlas() -> Vec<u8> {
     paint_street_regions(&mut a);
     paint_soldier_regions(&mut a);
     paint_border_guards(&mut a);
+    // Graphics push 2 — the roughness channel (alpha ONLY: every
+    // RGB texel painted above is untouched, no rect moves, and the
+    // soldier's frozen regions keep their exact pixels — alpha on
+    // painted texels was uniformly 255 and unread by any shader
+    // until now). The operator shader's specular term keys on it:
+    // gunmetal and brass sit low, oiled leather and skin mid,
+    // cloth high. Painted last — set() resets alpha to 255.
+    a.rough(region::METAL, 55, 15, 0xCA35_00B0);
+    a.rough(region::METAL_LIGHT, 75, 15, 0xCA35_00B1);
+    a.rough(region::HELMET, 105, 20, 0xCA35_00B2);
+    a.rough(region::RADIO, 115, 20, 0xCA35_00B3);
+    a.rough(region::PLASTIC, 125, 20, 0xCA35_00B4);
+    a.rough(region::LEATHER, 150, 25, 0xCA35_00B5);
+    a.rough(region::SKIN, 165, 20, 0xCA35_00B6);
+    a.rough(region::FACE, 170, 20, 0xCA35_00B7);
+    a.rough(region::HAIR, 195, 20, 0xCA35_00B8);
+    a.rough(region::WAXED, 205, 20, 0xCA35_00B9);
+    a.rough(region::WEBBING, 235, 12, 0xCA35_00BA);
+    a.rough(region::COAT, 235, 12, 0xCA35_00BB);
+    a.rough(region::VEST, 240, 10, 0xCA35_00BC);
+    a.rough(region::POUCH, 240, 10, 0xCA35_00BD);
+    a.rough(region::STRAP, 240, 10, 0xCA35_00BE);
+    a.rough(region::ARMBAND, 240, 10, 0xCA35_00BF);
+    a.rough(region::FABRIC, 245, 8, 0xCA35_00C0);
+    a.rough(region::TROUSER, 245, 8, 0xCA35_00C1);
+    a.rough(region::MASK, 245, 8, 0xCA35_00C2);
+    a.rough(region::REDCLOTH, 240, 10, 0xCA35_00C3);
     a.px
 }
 

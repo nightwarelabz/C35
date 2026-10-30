@@ -69,7 +69,9 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
         // Emissive art: the texels are the light. A gentle lift so a
         // lit window sits above the night around it, then the same
         // fog and grade as everything else — distance still takes it.
-        col = tex.rgb * 1.5 + tex.rgb * tex.rgb * 0.35;
+        // Push 2: the lift runs a little hotter so lamp glass and
+        // lit windows cross the bloom knee as sources, not decals.
+        col = tex.rgb * 1.6 + tex.rgb * tex.rgb * 0.45;
     } else {
         let n = normalize(in.normal);
         let amb = mix(u.amb_ground.rgb, u.amb_sky.rgb, n.y * 0.5 + 0.5);
@@ -84,13 +86,36 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
         // lamps stand over, already occluded and fallen off by the
         // field that baked them.
         col += tex.rgb * SODIUM * in.light * 1.35;
+        // Graphics push 2 — hot cores: the ^2.2 term concentrates
+        // extra light where the baked field is already strong, so
+        // a pool has a heart under its lamp instead of reading as
+        // a flat disc of sodium. The wet pass below adds the same
+        // term to its own diffuse.
+        let core = pow(clamp(in.light, 0.0, 1.3), 2.2);
+        col += tex.rgb * SODIUM * core * 0.85;
         // Sky bounce: a whisper of cool ambient the hemisphere term
         // alone doesn't carry at night, so honest shadow stays
         // READABLE (deep blue-grey, per the canon) instead of
         // voiding to black. It is a constant, not a light source:
         // the read never consults pixels, and the field's pools and
         // shadows keep their ratios above it.
-        col += tex.rgb * vec3<f32>(0.030, 0.034, 0.044);
+        col += tex.rgb * vec3<f32>(0.034, 0.040, 0.058);
+        // Graphics push 2 — dry specular: un-wet surfaces still
+        // answer the lights with a roughness-keyed glint (the same
+        // atlas alpha the wet pass reads). Painted metal, roller
+        // shutters and door steel catch the moon and the low sun;
+        // masonry, at alpha ~0.9, barely breathes. This is the
+        // metal/stone separation the flat diffuse could not give.
+        let v = normalize(u.cam_pos.xyz - in.world_pos);
+        let rough_s = tex.a;
+        let spow_s = mix(64.0, 10.0, rough_s);
+        let sgain = mix(0.55, 0.05, rough_s);
+        let hm_s = normalize(u.moon_dir.xyz + v);
+        col += u.moon_color.rgb
+            * (pow(max(dot(n, hm_s), 0.0), spow_s) * sgain);
+        let hs_s = normalize(u.sun_dir.xyz + v);
+        col += u.sun_color.rgb
+            * (pow(max(dot(n, hs_s), 0.0), spow_s) * sgain * 0.8 * shadow);
         if (in.mat > 1.5) {
             // THE WET PASS (mat 2): the street is water over stone.
             // Two carriers, kept apart because they do different
@@ -103,6 +128,7 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             // toward the viewer the way a reflection does, which no
             // painted streak ever managed.
             col += tex.rgb * SODIUM * in.light * 1.35;
+            col += tex.rgb * SODIUM * core * 0.85;
             let v = normalize(u.cam_pos.xyz - in.world_pos);
             let n2 = normalize(in.normal);
             let ndv = clamp(dot(n2, v), 0.0, 1.0);
@@ -124,12 +150,23 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
                 if (lp.w > 0.0) {
                     let lv = lp.xyz - in.world_pos;
                     let d = length(lv);
-                    let reach = clamp(1.0 - (d / 11.0) * (d / 11.0), 0.0, 1.0);
+                    // Push 2: reach 11.0 → 13.5 — pools throw their
+                    // specular further down the street.
+                    let reach = clamp(1.0 - (d / 13.5) * (d / 13.5), 0.0, 1.0);
                     if (reach > 0.0) {
                         let hv = normalize(lv / max(d, 0.001) + v);
                         let ndh = max(dot(n2, hv), 0.0);
                         let spec = pow(ndh, spec_pow) * spec_gain;
                         col += SODIUM * spec * pow(reach, 1.5) * lp.w * fres * breakup;
+                        // Push 2 — the streak's tail: a second
+                        // lobe off a vertically squashed normal
+                        // stretches a longer, dimmer reflection
+                        // toward the camera, the way a wet street
+                        // drags a lamp's light behind its core.
+                        let ntail = normalize(vec3<f32>(n2.x, n2.y * 0.38, n2.z));
+                        let ndht = max(dot(ntail, hv), 0.0);
+                        let tail = pow(ndht, spec_pow * 0.42) * spec_gain * 0.5;
+                        col += SODIUM * tail * pow(reach, 1.5) * lp.w * fres * breakup;
                     }
                 }
             }

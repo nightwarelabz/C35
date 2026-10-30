@@ -452,6 +452,35 @@ pub fn generate_city_atlas() -> Vec<u8> {
             }
         }
     }
+    {
+        // Graphics push 2 — slab tone drift: each 64 px pour of
+        // the asphalt takes its own seeded tone (0.93–1.06), so
+        // the street reads as poured sections at range instead of
+        // one uniform sheet. Runs before soften_city settles it.
+        let r = region::ASPHALT;
+        let mut rng = Rng::new(0xC17E_0011);
+        for sy in 0..2 {
+            for sx in 0..2 {
+                let tone = 0.93 + (rng.next() % 14) as f32 / 100.0;
+                for y in 0..64 {
+                    for x in 0..64 {
+                        let px = r.0 + sx * 64 + x;
+                        let py = r.1 + sy * 64 + y;
+                        let c = a.get(px, py);
+                        a.set(
+                            px,
+                            py,
+                            [
+                                (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
+                                (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
+                                (c[2] as f32 * tone).clamp(0.0, 255.0) as u8,
+                            ],
+                        );
+                    }
+                }
+            }
+        }
+    }
     // Solidity: settle the big flat surfaces into masses before
     // the furniture is drawn over them.
     for r in [
@@ -536,6 +565,13 @@ pub fn generate_city_atlas() -> Vec<u8> {
         a.rect((r.0 + 30, r.1 + 18, 20, 32), [16, 18, 20]); // glass slit
         a.rect((r.0 + 30, r.1 + 18, 20, 3), [52, 54, 52]);
         a.rect((r.0 + r.2 - 14, r.1 + 62, 5, 10), [150, 148, 140]); // handle
+        // Graphics push 2 — the door's furniture of wear: hinge
+        // blocks on the left jamb and a scuffed kick plate along
+        // the foot, where boots land.
+        a.rect((r.0 + 4, r.1 + 10, 4, 9), [56, 58, 56]);
+        a.rect((r.0 + 4, r.1 + 58, 4, 9), [56, 58, 56]);
+        a.rect((r.0 + 4, r.1 + 106, 4, 9), [56, 58, 56]);
+        a.rect((r.0 + 6, r.1 + r.3 - 15, r.2 - 12, 9), [62, 62, 58]); // kick plate
     }
     {
         // Lit window: warm gradient + muntin grid + one curtain edge.
@@ -603,6 +639,17 @@ pub fn generate_city_atlas() -> Vec<u8> {
                 a.set(x, y.min(r.1 + r.3 - 1), [36, 39, 37]);
             }
         }
+        // Graphics push 2 — rivets stand off the vertical seams:
+        // 2 px studs every 16 px, caught by the dry-spec glint.
+        for k in 0..=2 {
+            let x = (r.0 + k * 64 + 3).min(r.0 + r.2 - 2);
+            let mut y = r.1 + 8;
+            while y < r.1 + r.3 {
+                a.set(x, y, [88, 92, 88]);
+                a.set(x + 1, y, [88, 92, 88]);
+                y += 16;
+            }
+        }
     }
     a.cloth(
         region::ROOF,
@@ -611,6 +658,18 @@ pub fn generate_city_atlas() -> Vec<u8> {
         Some((&[[28, 27, 30], [42, 41, 45]], 130, 8)),
         0xC17E_000D,
     );
+    {
+        // Graphics push 2 — the felt seams the region's comment
+        // always promised: dark laps every 32 px across the roof.
+        let r = region::ROOF;
+        for k in 0..=4 {
+            let y = r.1 + k * 32;
+            for x in r.0..r.0 + r.2 {
+                a.set(x, y.min(r.1 + r.3 - 1), [23, 22, 25]);
+                a.set(x, (y + 1).min(r.1 + r.3 - 1), [23, 22, 25]);
+            }
+        }
+    }
     {
         // Checkpoint timber: planks + worn paint bands.
         let r = region::TIMBER;
@@ -696,12 +755,43 @@ pub fn generate_city_atlas() -> Vec<u8> {
             }
         }
     }
+    {
+        // Graphics push 2 — damp stains on the concrete: a few
+        // large, soft, dark patches (tone 0.78) the size of a
+        // spreading puddle's memory — ground that has been wet
+        // before and will be again. Painted here, in the wear
+        // block, because set() resets alpha and roughness follows.
+        let mut rng = Rng::new(0xC17E_0012);
+        for _ in 0..8 {
+            let r = region::CONCRETE;
+            let bx = r.0 + rng.range(r.2.saturating_sub(20).max(1));
+            let by = r.1 + rng.range(r.3.saturating_sub(20).max(1));
+            let bw = 12 + rng.range(18);
+            let bh = 10 + rng.range(14);
+            for y in by..(by + bh).min(r.1 + r.3) {
+                for x in bx..(bx + bw).min(r.0 + r.2) {
+                    let c = a.get(x, y);
+                    a.set(
+                        x,
+                        y,
+                        [
+                            (c[0] as f32 * 0.78).clamp(0.0, 255.0) as u8,
+                            (c[1] as f32 * 0.78).clamp(0.0, 255.0) as u8,
+                            (c[2] as f32 * 0.80).clamp(0.0, 255.0) as u8,
+                        ],
+                    );
+                }
+            }
+        }
+    }
     // Roughness channel (alpha): smooth ground mirrors lamps
     // tight and hot; rough masonry spreads them broad and dim.
     // Emissive regions (WINDOW_LIT, LAMP_GLASS) keep alpha 255 —
     // the emissive branch never reads it.
-    a.rough(region::ASPHALT, 130, 30, 0xC17E_0020);
-    a.rough(region::CONCRETE, 185, 25, 0xC17E_0021);
+    // Push 2: asphalt 130 → 112 and concrete 185 → 168 — smoother
+    // painted ground, so wet lamp streaks run tighter and hotter.
+    a.rough(region::ASPHALT, 112, 30, 0xC17E_0020);
+    a.rough(region::CONCRETE, 168, 25, 0xC17E_0021);
     a.rough(region::STREAK, 100, 25, 0xC17E_0022);
     a.rough(region::BRICK, 225, 20, 0xC17E_0023);
     a.rough(region::BRICK_DARK, 225, 20, 0xC17E_0024);
