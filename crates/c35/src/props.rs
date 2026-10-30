@@ -261,8 +261,8 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
                 (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
                 (c[2] as f32 * tone).clamp(0.0, 255.0) as u8,
             ];
-            for y in 0..bh - 1 {
-                for xx in 0..bw - 1 {
+            for y in 0..bh - 2 {
+                for xx in 0..bw - 2 {
                     let px = x + xx as i32;
                     if px >= r.0 as i32 && px < (r.0 + r.2) as i32 {
                         a.set(px as u32, r.1 + row * bh + y, c);
@@ -272,7 +272,7 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
             x += bw as i32;
         }
     }
-    a.noise(r, 6, &mut rng);
+    a.noise(r, 3, &mut rng);
 }
 
 /// Ashlar stone: big blocks, wide joints, per-block tone drift.
@@ -303,7 +303,36 @@ fn paint_stone(a: &mut Atlas, r: (u32, u32, u32, u32), seed: u32) {
             x += bw as i32;
         }
     }
-    a.noise(r, 5, &mut rng);
+    // Solidity: stone's per-pixel speckle halved — ashlar reads as
+    // blocks with tone drift, not as a wire mesh of noise.
+    a.noise(r, 3, &mut rng);
+}
+
+/// Solidity pass (city): cross-blur a region's interior, 2 px
+/// inset. Same doctrine as the operator's soften — per-pixel
+/// speckle becomes broad tone, while 2 px-plus joints, courses,
+/// and blocks survive as softer masses. Applied only to the big
+/// flat surfaces (brick, stone, concrete, asphalt); the furniture
+/// regions keep their drawn lines (muntins, banner bars, seams).
+fn soften_city(a: &mut Atlas, r: (u32, u32, u32, u32)) {
+    let snap = a.px.clone();
+    let at = |x: u32, y: u32, k: usize| -> i32 {
+        snap[((y * CITY_ATLAS_SIZE + x) * 4) as usize + k] as i32
+    };
+    for y in (r.1 + 2)..(r.1 + r.3 - 2) {
+        for x in (r.0 + 2)..(r.0 + r.2 - 2) {
+            let i = ((y * CITY_ATLAS_SIZE + x) * 4) as usize;
+            for k in 0..3 {
+                let v = (at(x, y, k) * 2
+                    + at(x - 1, y, k)
+                    + at(x + 1, y, k)
+                    + at(x, y - 1, k)
+                    + at(x, y + 1, k))
+                    / 6;
+                a.px[i + k] = v.clamp(0, 255) as u8;
+            }
+        }
+    }
 }
 
 /// Paint the whole city atlas. Deterministic: same pixels on every
@@ -320,41 +349,58 @@ pub fn generate_city_atlas() -> Vec<u8> {
     a.cloth(
         region::CONCRETE,
         [63, 62, 59],
-        6,
+        3,
         Some((&[[54, 53, 51], [74, 72, 68], [48, 48, 47]], 130, 7)),
         0xC17E_0004,
     );
     {
-        // Slab joints: dark lines on a 32 px grid + a worn centre stain.
+        // Slab joints: 2 px shadowed gaps on a 32 px grid, not 1 px
+        // lines — a 1 px joint aliases into a wire under the 2.2x
+        // nearest upscale; a 2 px gap survives it as a joint.
         let r = region::CONCRETE;
         for k in 0..=4 {
             let x = r.0 + k * 32;
             for y in r.1..r.1 + r.3 {
                 a.set(x.min(r.0 + r.2 - 1), y, [40, 39, 37]);
+                a.set((x + 1).min(r.0 + r.2 - 1), y, [40, 39, 37]);
             }
             let y = r.1 + k * 32;
             for x in r.0..r.0 + r.2 {
                 a.set(x, y.min(r.1 + r.3 - 1), [40, 39, 37]);
+                a.set(x, (y + 1).min(r.1 + r.3 - 1), [40, 39, 37]);
             }
         }
     }
     a.cloth(
         region::ASPHALT,
         [38, 39, 44],
-        5,
+        3,
         Some((&[[30, 31, 36], [48, 49, 55], [26, 27, 31]], 220, 5)),
         0xC17E_0005,
     );
     {
         // Faint slab seams across the asphalt (the street is poured
-        // in slabs, per the reference's expansion joints).
+        // in slabs, per the reference's expansion joints) — 2 px,
+        // for the same upscale reason as the concrete joints.
         let r = region::ASPHALT;
         for k in 0..=2 {
             let y = r.1 + k * 64;
             for x in r.0..r.0 + r.2 {
                 a.set(x, y.min(r.1 + r.3 - 1), [24, 25, 29]);
+                a.set(x, (y + 1).min(r.1 + r.3 - 1), [24, 25, 29]);
             }
         }
+    }
+    // Solidity: settle the big flat surfaces into masses before
+    // the furniture is drawn over them.
+    for r in [
+        region::BRICK,
+        region::BRICK_DARK,
+        region::STONE,
+        region::CONCRETE,
+        region::ASPHALT,
+    ] {
+        soften_city(&mut a, r);
     }
     // ---- warehouse furniture ----
     {

@@ -45,7 +45,11 @@ fn fs_main(in: BlitOut) -> @location(0) vec4<f32> {
     let lse = luma(se);
     let lmin = min(lm, min(min(lnw, lne), min(lsw, lse)));
     let lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
-    if (lmax - lmin < max(0.0312, lmax * 0.125)) {
+    // Solidity tune: the old threshold let faint wire edges pass
+    // untouched, so they shimmered under the 2.2x upscale. Catch
+    // them (0.024 / 10%) — but clamp the shift tighter below, so
+    // the smoothing never drags colour across a solid face.
+    if (lmax - lmin < max(0.024, lmax * 0.10)) {
         return vec4<f32>(m, 1.0); // no edge worth touching
     }
 
@@ -56,7 +60,7 @@ fn fs_main(in: BlitOut) -> @location(0) vec4<f32> {
     );
     let dir_reduce = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);
     let rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
-    dir = clamp(dir * rcp, vec2<f32>(-8.0), vec2<f32>(8.0)) * texel;
+    dir = clamp(dir * rcp, vec2<f32>(-6.0), vec2<f32>(6.0)) * texel;
 
     let a = 0.5 * (
         textureSample(scene_tex, scene_sampler, uv + dir * (1.0 / 3.0 - 0.5)).rgb
