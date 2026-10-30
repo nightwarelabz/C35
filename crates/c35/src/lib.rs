@@ -56,6 +56,7 @@ pub mod props;
 pub mod scene;
 pub mod sound;
 pub mod traversal;
+pub mod ui;
 pub mod vista;
 pub mod weather;
 pub mod world;
