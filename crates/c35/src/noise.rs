@@ -37,6 +37,9 @@ pub fn value_noise(x: f32, z: f32, seed: u32) -> f32 {
 
 /// Fractal Brownian motion, output roughly in [-1, 1).
 pub fn fbm(x: f32, z: f32, octaves: u32, seed: u32) -> f32 {
+    if octaves == 0 {
+        return 0.0;
+    }
     let mut sum = 0.0f32;
     let mut amp = 0.5f32;
     let mut norm = 0.0f32;
@@ -50,11 +53,17 @@ pub fn fbm(x: f32, z: f32, octaves: u32, seed: u32) -> f32 {
         pz = rz * 2.03;
         amp *= 0.5;
     }
+    if norm == 0.0 {
+        return 0.0;
+    }
     sum / norm
 }
 
 /// Ridged fBm — sharp crests, output in [0, 1]. The mountain maker.
 pub fn ridged(x: f32, z: f32, octaves: u32, seed: u32) -> f32 {
+    if octaves == 0 {
+        return 0.0;
+    }
     let mut sum = 0.0f32;
     let mut amp = 0.55f32;
     let mut norm = 0.0f32;
@@ -68,10 +77,33 @@ pub fn ridged(x: f32, z: f32, octaves: u32, seed: u32) -> f32 {
         pz = rz * 2.11;
         amp *= 0.52;
     }
+    if norm == 0.0 {
+        return 0.0;
+    }
     (sum / norm).clamp(0.0, 1.0)
 }
 
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_octaves_are_finite() {
+        assert_eq!(fbm(1.5, -2.0, 0, WORLD_SEED), 0.0);
+        assert_eq!(ridged(1.5, -2.0, 0, WORLD_SEED), 0.0);
+        assert!(fbm(0.2, 0.4, 4, WORLD_SEED).is_finite());
+        let r = ridged(0.2, 0.4, 4, WORLD_SEED);
+        assert!(r.is_finite() && (0.0..=1.0).contains(&r));
+    }
+
+    #[test]
+    fn negative_coordinates_stay_finite() {
+        let n = value_noise(-3.2, -0.1, WORLD_SEED);
+        assert!(n.is_finite() && n.abs() <= 1.0);
+    }
 }

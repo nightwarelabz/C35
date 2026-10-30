@@ -18,6 +18,8 @@
 //!   caller — the M3 web proof convicted the first cut for assuming
 //!   threads; the core must never require them.
 
+use std::any::Any;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -107,6 +109,16 @@ impl Latch {
         while *c > 0 {
             c = self.done.wait(c).unwrap();
         }
+    }
+}
+
+/// Counts the latch down on drop, including unwind. A chunk
+/// that panics must not leave `wait` blocked forever.
+struct LatchGuard(Arc<Latch>);
+
+impl Drop for LatchGuard {
+    fn drop(&mut self) {
+        self.0.count_down();
     }
 }
 
@@ -211,6 +223,7 @@ impl JobPool {
         let base = buf.as_mut_ptr() as usize;
         let f_addr = f as *const F as usize;
         let latch = Arc::new(Latch::new(chunks));
+        let panic_slot: Arc<Mutex<Option<Box<dyn Any + Send>>>> = Arc::new(Mutex::new(None));
         let chunk_len = len.div_ceil(chunks);
         for c in 0..chunks {
             let start = c * chunk_len;
@@ -220,15 +233,27 @@ impl JobPool {
             }
             let n = chunk_len.min(len - start);
             let latch = latch.clone();
+            let panic_slot = panic_slot.clone();
             let job: Job = Box::new(move || {
+                let _guard = LatchGuard(latch);
                 // SAFETY: disjoint range of the caller's slice (see the
                 // method docs); the caller blocks on the latch, so the
-                // slice and `f` outlive every job.
-                let slice =
-                    unsafe { std::slice::from_raw_parts_mut((base as *mut T).add(start), n) };
-                let f_ref = unsafe { &*(f_addr as *const F) };
-                f_ref(start, slice);
-                latch.count_down();
+                // slice and `f` outlive every job. The guard counts the
+                // latch down if `f` panics, and the catch keeps the
+                // worker thread alive so the pool is not one panic
+                // away from a permanent stall.
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let slice =
+                        unsafe { std::slice::from_raw_parts_mut((base as *mut T).add(start), n) };
+                    let f_ref = unsafe { &*(f_addr as *const F) };
+                    f_ref(start, slice);
+                }));
+                if let Err(payload) = result {
+                    let mut slot = panic_slot.lock().unwrap();
+                    if slot.is_none() {
+                        *slot = Some(payload);
+                    }
+                }
             });
             // A failed send means every worker is gone (impossible while
             // &self is alive — the pool owns the only sender — but stay
@@ -239,6 +264,10 @@ impl JobPool {
             }
         }
         latch.wait();
+        let payload = panic_slot.lock().unwrap().take();
+        if let Some(payload) = payload {
+            resume_unwind(payload);
+        }
     }
 }
 
@@ -270,4 +299,46 @@ pub struct CoreStats {
     pub jobs_executed: u64,
     pub pool_size: usize,
     pub update_ms: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::*;
+
+    #[test]
+    fn chunks_cover_the_buffer_once() {
+        let pool = JobPool::with_workers(4);
+        let mut buf = vec![0u32; 10];
+        pool.for_each_chunk_mut(&mut buf, 3, &|start, chunk| {
+            for (i, x) in chunk.iter_mut().enumerate() {
+                *x = (start + i) as u32 + 1;
+            }
+        });
+        assert_eq!(buf, (1..=10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn chunk_panic_returns_and_the_pool_survives() {
+        let pool = JobPool::with_workers(2);
+        let mut buf = vec![0u32; 32];
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            pool.for_each_chunk_mut(&mut buf, 4, &|_start, chunk| {
+                if !chunk.is_empty() {
+                    panic!("chunk boom");
+                }
+            });
+        }));
+        assert!(
+            result.is_err(),
+            "the panic must reach the caller, not deadlock"
+        );
+        pool.for_each_chunk_mut(&mut buf, 4, &|_, chunk| {
+            for x in chunk.iter_mut() {
+                *x = 1;
+            }
+        });
+        assert!(buf.iter().all(|x| *x == 1));
+    }
 }
