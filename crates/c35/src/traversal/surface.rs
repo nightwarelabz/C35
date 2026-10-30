@@ -4,10 +4,12 @@
 //! fields, the wall-run prices wetness from these fields, and the
 //! grapple reads biteability from these fields. There is exactly one
 //! record shape, and no traversal-local override flag anywhere: a
-//! wet wall is wet because the record says so. The weather module
-//! ([`crate::weather::Atmosphere::paint_surface`]) is the writer;
-//! courses may still set a wetness directly, and a wetter record
-//! is kept when the hour is lighter.
+//! wet wall is wet because the record says so.
+//! [`crate::weather::Atmosphere::paint_surface`] can write this
+//! hour's wetness onto a record, and a wetter record is kept when
+//! the hour is lighter. No shipped host calls it yet — the vista
+//! hosts draw the storm and leave these records alone — so courses
+//! still set wetness directly.
 
 /// What a surface is made of. Deliberately coarse: the record
 /// prices behavior, not appearance — painters own appearance.
@@ -26,7 +28,9 @@ pub enum SurfaceKind {
 }
 
 /// One surface's behavior record. `wetness` is 0 (dry) to 1
-/// (soaked); it is written by the weather field, read by everyone.
+/// (soaked). Weather offers [`crate::weather::Atmosphere::paint_surface`]
+/// as the writer; no shipped host calls it yet, so callers set
+/// the value themselves. Everyone who prices a surface reads it.
 #[derive(Copy, Clone, Debug)]
 pub struct SurfaceRecord {
     pub kind: SurfaceKind,

@@ -3248,13 +3248,18 @@ impl Renderer {
             pass.draw(0..3, 0..1);
             let mut atmo_draws = 0u32;
             if atmo.cloud_active() {
-                // Before terrain, so the ground overwrites the veil and
-                // the sky keeps it.
                 pass.set_pipeline(&self.cloud_pipeline);
                 pass.set_bind_group(1, &self.weather_bind_group, &[]);
                 pass.draw(0..3, 0..1);
                 atmo_draws += 1;
             }
+            // The cloud veil's depth compare is Always: it does not
+            // test and it does not write, so the draw above blends
+            // over sky and ground alike. Terrain has to come after
+            // it. This draw is what puts the land back in front of
+            // the veil. Draw the veil later, or give it a Less test
+            // while the sky still writes no depth, and clouds sit
+            // on the ground.
             pass.set_pipeline(&self.terrain_pipeline);
             pass.set_vertex_buffer(0, self.merged_vb.slice(..));
             pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);

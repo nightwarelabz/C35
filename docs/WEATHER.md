@@ -25,18 +25,25 @@ far the drop sits below the eye. The shader does not read a lamp list.
 Clouds are value noise on the view ray, scrolled by the wind. Terrain
 drawn after the veil covers the ground, so the veil stays in the sky.
 
-## What else reads it
+## Available, not called by a host yet
+
+These are the hooks for a host that owns the matching system.
+The shipped native and windowed hosts draw the storm and do not
+call them. Wall grip, footstep gain, scent wash, and the soldier's
+attention already price the fields; nothing in those hosts writes
+the fields from the reading.
 
 - `Atmosphere::paint_surface` writes wetness onto the shared surface
-  record. Wall grip and footstep gain already price that field. A
-  wetter record (a puddle) is kept.
+  record. A wetter record (a puddle) is kept.
 - `Atmosphere::vision_gain` is the conscript's rain degradation
   (`1 - 0.30 * rain`, floored at 0.70). Clear weather returns 1.
 - `Atmosphere::apply_scent` writes rain and horizontal wind onto the
   Hound's trail, which already washes and drifts.
-- A soldier's input `rain` is this reading's `rain`. The brain already
-  multiplies attention by it. Copy the field; do not invent a second
-  rain.
+- A soldier's input `rain` is this reading's `rain`. Copy it when
+  a host ticks a soldier. None does yet.
+
+The windowed host caches `Atmosphere::at` for the current UTC
+minute, so the six-hour wetness integral is not rerun every frame.
 
 `ripple_offset(x, z, time, rain)` is a bounded puddle-normal offset
 for a wet surface to sample later. The rain sheet does not use it.

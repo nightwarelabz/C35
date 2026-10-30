@@ -125,6 +125,10 @@ struct App {
     frame_count: u64,
     /// `COMIGEN_WEATHER=1` opts the vista into [`c35::weather`].
     weather: bool,
+    /// Minute bucket → atmosphere. `Atmosphere::at` integrates six
+    /// hours of rain; inside one UTC minute the reading does not
+    /// move enough to recompute it every frame.
+    weather_minute: Option<(i64, c35::weather::Atmosphere)>,
 }
 
 impl App {
@@ -152,7 +156,22 @@ impl App {
             frame_ema_ms: 0.0,
             frame_count: 0,
             weather: std::env::var("COMIGEN_WEATHER").ok().as_deref() == Some("1"),
+            weather_minute: None,
         }
+    }
+
+    /// Atmosphere for this unix instant, recomputed when the UTC
+    /// minute changes and reused until then.
+    fn cached_atmosphere(&mut self, unix: f64) -> c35::weather::Atmosphere {
+        let minute = (unix / 60.0).floor() as i64;
+        if let Some((cached, reading)) = self.weather_minute {
+            if cached == minute {
+                return reading;
+            }
+        }
+        let reading = c35::weather::Atmosphere::at(unix);
+        self.weather_minute = Some((minute, reading));
+        reading
     }
 
     fn observer(&mut self) -> Observer {
@@ -309,7 +328,11 @@ impl App {
         self.world = Some(world);
         let pose = self.current_pose();
         let time = self.start.elapsed().as_secs_f32();
-        let weather_on = self.weather;
+        let weather_reading = if self.weather {
+            Some(self.cached_atmosphere(world.unix_seconds))
+        } else {
+            None
+        };
 
         // Phase 2 — GPU work (field borrows only; no &mut self calls).
         let mut outdated = false;
@@ -321,8 +344,8 @@ impl App {
                     let view = frame
                         .texture
                         .create_view(&c35::wgpu::TextureViewDescriptor::default());
-                    if weather_on {
-                        renderer.set_atmosphere(c35::weather::Atmosphere::at(world.unix_seconds));
+                    if let Some(reading) = weather_reading {
+                        renderer.set_atmosphere(reading);
                     }
                     renderer.render(&view, &pose, &world, time);
                     frame.present();
@@ -451,7 +474,7 @@ impl ApplicationHandler for App {
         );
         println!("controls         : drift until input · click = mouse capture · WASD/QE fly · Shift = speed · Esc = release · idle 8 s = drift returns · 0-4 = governor pin · ` = unpin");
         if self.weather {
-            let reading = c35::weather::Atmosphere::at(world.unix_seconds);
+            let reading = self.cached_atmosphere(world.unix_seconds);
             println!("{}", reading.ledger_line());
         }
         self.world = Some(world);

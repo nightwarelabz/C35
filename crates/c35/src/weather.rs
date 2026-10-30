@@ -125,6 +125,9 @@ impl Atmosphere {
     /// Write this hour's wetness onto a surface record. A record
     /// that is already wetter (a standing puddle, a course that
     /// set the value) keeps its wetness.
+    ///
+    /// No shipped host calls this yet. The windowed and native
+    /// hosts draw the storm and leave surface records alone.
     pub fn paint_surface(self, mut rec: SurfaceRecord) -> SurfaceRecord {
         rec.wetness = self.wetness.max(rec.wetness).clamp(0.0, 1.0);
         rec
@@ -134,6 +137,9 @@ impl Atmosphere {
     /// the soldier brain's rain term (`1 - 0.30 * rain`) and is
     /// floored so a downpour degrades him without blinding him.
     /// Clear weather returns exactly 1.
+    ///
+    /// No shipped host calls this yet. A host that ticks a
+    /// soldier multiplies attention gain by it.
     pub fn vision_gain(self) -> f32 {
         if self.rain <= 0.0 {
             return 1.0;
@@ -150,6 +156,9 @@ impl Atmosphere {
     /// Write rain and wind onto the Hound's trail field. The
     /// field already washes in `rain` and drifts on `wind`; this
     /// is the writer those comments named.
+    ///
+    /// No shipped host calls this yet. A host that owns a
+    /// [`ScentField`] applies the reading once per tick.
     pub fn apply_scent(self, field: &mut ScentField) {
         field.rain = self.rain.clamp(0.0, 1.0);
         field.wind = self.wind3();
@@ -195,14 +204,20 @@ impl Atmosphere {
 /// Two slow lobes (about 17 h and 57 h) plus an hour-bucket
 /// hash, then a threshold so most hours are dry. Inside a
 /// storm the rate is squared, so drizzle is the body and a
-/// downpour is the peak. Integer hash, then `f64` sine — the
-/// same class of math the solar model already uses.
+/// downpour is the peak. The hash is blended with a smoothstep
+/// from this hour's value to the next, so the rate does not
+/// step at the hour boundary. Integer hash, then `f64` sine —
+/// the same class of math the solar model already uses.
 pub fn rain_rate(unix_secs: f64) -> f32 {
     let h = unix_secs / 3600.0;
     let a = (h * 0.37).sin() as f32 * 0.5 + 0.5;
     let b = (h * 0.11 + 1.7).sin() as f32 * 0.5 + 0.5;
-    let hour_bucket = h.floor() as i64;
-    let n = hash01(hour_bucket);
+    let hour = h.floor();
+    let frac = (h - hour) as f32;
+    let n0 = hash01(hour as i64);
+    let n1 = hash01(hour as i64 + 1);
+    let s = frac * frac * (3.0 - 2.0 * frac);
+    let n = n0 + (n1 - n0) * s;
     let raw = a * 0.62 + b * 0.38;
     let t = ((raw - 0.58) / 0.42).clamp(0.0, 1.0);
     (t * t * (0.45 + 0.55 * n)).clamp(0.0, 1.0)
@@ -319,6 +334,29 @@ mod tests {
         assert_eq!(Atmosphere::at(t), Atmosphere::at(t));
         assert_eq!(rain_rate(t).to_bits(), rain_rate(t).to_bits());
         assert_eq!(wetness_at(t).to_bits(), wetness_at(t).to_bits());
+    }
+
+    #[test]
+    fn rain_rate_does_not_step_at_the_hour() {
+        // The hour hash used to replace itself in one sample.
+        // Across the boundary the smoothstep blend moves by
+        // about a second's worth of the hash delta, not the
+        // whole delta.
+        for i in 0..48 {
+            let boundary = 1_700_000_000.0 + i as f64 * 3600.0;
+            let boundary = (boundary / 3600.0).floor() * 3600.0;
+            let before = rain_rate(boundary - 1.0);
+            let at = rain_rate(boundary);
+            let after = rain_rate(boundary + 1.0);
+            assert!(
+                (before - at).abs() < 0.01,
+                "hour {i}: {before} vs {at}"
+            );
+            assert!(
+                (after - at).abs() < 0.01,
+                "hour {i} after: {after} vs {at}"
+            );
+        }
     }
 
     #[test]
