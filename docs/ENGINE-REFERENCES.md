@@ -559,3 +559,17 @@ adaptable per §3), not the engine:
 6. **Everything else on demand.** Bevy patterns, SoLoud mixer
    shape, MD5 clip shape — read when their subsystem starts,
    not before; this audit is the map, not the build.
+
+## POLICY ADDENDUM (Chase, 2026-10-30) — REFERENCES ONLY, EVERYTHING FROM SCRATCH
+
+The compatibility findings above are LEGAL background, not a build
+instruction. Chase's ruling: open-source engines (DarkPlaces and
+suchlike) are used as REFERENCES ONLY. Everything C35 and DeBrief
+make is FROM SCRATCH — original code, written in-house, informed by
+the references but never copied, pasted, vendored, or adapted from
+them. The ADAPT/PORT permission the AGPLv3 analysis grants is NOT
+exercised. Any future crew that proposes lifting code from a
+reference engine is proposing against this policy and must be
+refused. What transfers across the reference boundary is
+understanding: algorithms understood, numbers measured against,
+designs learned from — re-expressed originally in Rust on wgpu.
