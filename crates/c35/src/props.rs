@@ -169,6 +169,28 @@ impl Atlas {
             self.px[i + 3] = 255;
         }
     }
+    /// Write ONLY the alpha channel: the atlas alpha carries
+    /// per-texel ROUGHNESS for the wet pass (graphics push) —
+    /// 0 = glass-smooth, 255 = rough stone. It must be painted
+    /// LAST in generate_city_atlas: set()/rect()/vshade() all
+    /// reset alpha to 255, while noise() and soften_city() leave
+    /// it alone.
+    fn set_alpha(&mut self, x: u32, y: u32, v: u8) {
+        if x < CITY_ATLAS_SIZE && y < CITY_ATLAS_SIZE {
+            let i = ((y * CITY_ATLAS_SIZE + x) * 4) as usize;
+            self.px[i + 3] = v;
+        }
+    }
+    /// Fill a region's roughness channel: base ± variation noise.
+    fn rough(&mut self, r: (u32, u32, u32, u32), base: i32, var: i32, seed: u32) {
+        let mut rng = Rng::new(seed);
+        for y in r.1..r.1 + r.3 {
+            for x in r.0..r.0 + r.2 {
+                let v = (base + rng.jitter(var)).clamp(0, 255) as u8;
+                self.set_alpha(x, y, v);
+            }
+        }
+    }
     fn get(&self, x: u32, y: u32) -> [u8; 3] {
         let i = ((y * CITY_ATLAS_SIZE + x) * 4) as usize;
         [self.px[i], self.px[i + 1], self.px[i + 2]]
@@ -265,7 +287,27 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
                 for xx in 0..bw - 2 {
                     let px = x + xx as i32;
                     if px >= r.0 as i32 && px < (r.0 + r.2) as i32 {
-                        a.set(px as u32, r.1 + row * bh + y, c);
+                        // Graphics push: a bevel read per brick —
+                        // the top row catches the light, the bottom
+                        // row falls into its own shadow. At street
+                        // distance this is what separates brick
+                        // courses from a flat tint.
+                        let m = if y == 0 {
+                            1.15
+                        } else if y == bh - 3 {
+                            0.85
+                        } else {
+                            1.0
+                        };
+                        a.set(
+                            px as u32,
+                            r.1 + row * bh + y,
+                            [
+                                (c[0] as f32 * m).clamp(0.0, 255.0) as u8,
+                                (c[1] as f32 * m).clamp(0.0, 255.0) as u8,
+                                (c[2] as f32 * m).clamp(0.0, 255.0) as u8,
+                            ],
+                        );
                     }
                 }
             }
@@ -296,7 +338,26 @@ fn paint_stone(a: &mut Atlas, r: (u32, u32, u32, u32), seed: u32) {
                 for xx in 0..bw - 2 {
                     let px = x + xx as i32;
                     if px >= r.0 as i32 && px < (r.0 + r.2) as i32 {
-                        a.set(px as u32, r.1 + row * bh + y, c);
+                        // Graphics push: the same bevel read as
+                        // brick, at ashlar scale — a lit top edge
+                        // and a shadowed foot per block, so walls
+                        // keep their courses under flat night light.
+                        let m = if y == 0 {
+                            1.13
+                        } else if y == bh - 3 {
+                            0.86
+                        } else {
+                            1.0
+                        };
+                        a.set(
+                            px as u32,
+                            r.1 + row * bh + y,
+                            [
+                                (c[0] as f32 * m).clamp(0.0, 255.0) as u8,
+                                (c[1] as f32 * m).clamp(0.0, 255.0) as u8,
+                                (c[2] as f32 * m).clamp(0.0, 255.0) as u8,
+                            ],
+                        );
                     }
                 }
             }
@@ -582,5 +643,75 @@ pub fn generate_city_atlas() -> Vec<u8> {
             }
         }
     }
+    // Graphics push: ground wear, then roughness — both LAST, after
+    // every set()/rect()/vshade() in the file, because those reset
+    // alpha to 255 and roughness lives in alpha.
+    {
+        // Worn patches on the concrete slabs and repair patches on
+        // the asphalt: large soft tone shifts, not speckle, so the
+        // street reads as maintained ground rather than noise.
+        let mut rng = Rng::new(0xC17E_0010);
+        for _ in 0..24 {
+            let r = region::CONCRETE;
+            let bx = r.0 + rng.range(r.2.saturating_sub(16).max(1));
+            let by = r.1 + rng.range(r.3.saturating_sub(16).max(1));
+            let bw = 8 + rng.range(16);
+            let bh = 8 + rng.range(16);
+            let tone = if rng.next() % 2 == 0 { 0.88 } else { 1.10 };
+            for y in by..(by + bh).min(r.1 + r.3) {
+                for x in bx..(bx + bw).min(r.0 + r.2) {
+                    let c = a.get(x, y);
+                    a.set(
+                        x,
+                        y,
+                        [
+                            (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
+                            (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
+                            (c[2] as f32 * tone).clamp(0.0, 255.0) as u8,
+                        ],
+                    );
+                }
+            }
+        }
+        for _ in 0..18 {
+            let r = region::ASPHALT;
+            let bx = r.0 + rng.range(r.2.saturating_sub(14).max(1));
+            let by = r.1 + rng.range(r.3.saturating_sub(14).max(1));
+            let bw = 8 + rng.range(14);
+            let bh = 6 + rng.range(12);
+            let tone = if rng.next() % 2 == 0 { 0.82 } else { 1.14 };
+            for y in by..(by + bh).min(r.1 + r.3) {
+                for x in bx..(bx + bw).min(r.0 + r.2) {
+                    let c = a.get(x, y);
+                    a.set(
+                        x,
+                        y,
+                        [
+                            (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
+                            (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
+                            (c[2] as f32 * tone).clamp(0.0, 255.0) as u8,
+                        ],
+                    );
+                }
+            }
+        }
+    }
+    // Roughness channel (alpha): smooth ground mirrors lamps
+    // tight and hot; rough masonry spreads them broad and dim.
+    // Emissive regions (WINDOW_LIT, LAMP_GLASS) keep alpha 255 —
+    // the emissive branch never reads it.
+    a.rough(region::ASPHALT, 130, 30, 0xC17E_0020);
+    a.rough(region::CONCRETE, 185, 25, 0xC17E_0021);
+    a.rough(region::STREAK, 100, 25, 0xC17E_0022);
+    a.rough(region::BRICK, 225, 20, 0xC17E_0023);
+    a.rough(region::BRICK_DARK, 225, 20, 0xC17E_0024);
+    a.rough(region::STONE, 230, 20, 0xC17E_0025);
+    a.rough(region::METAL_DARK, 150, 25, 0xC17E_0026);
+    a.rough(region::ROLLER, 160, 25, 0xC17E_0027);
+    a.rough(region::DOOR, 150, 20, 0xC17E_0028);
+    a.rough(region::ROOF, 220, 25, 0xC17E_0029);
+    a.rough(region::TIMBER, 215, 25, 0xC17E_002A);
+    a.rough(region::BANNER, 235, 15, 0xC17E_002B);
+    a.rough(region::WINDOW_DARK, 80, 20, 0xC17E_002C);
     a.px
 }

@@ -128,6 +128,10 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
 
 // Exponential distance fog; the fog colour comes from the reality layer,
 // and the sun side of the fog still warms toward the glow.
+// Graphics push: a ground-haze term — fog thickens slightly for
+// fragments below the camera, so haze pools in streets and hollows
+// instead of hanging uniformly. Bounded (×1.25 max) and
+// camera-relative, so it can never void a hilltop or flood a street.
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let rel = world_pos - u.cam_pos.xyz;
     let dist = length(rel);
@@ -137,7 +141,8 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     // factor. The mix is exact at 0.0, so the classic path's fog is
     // bit-for-bit the reality layer's, untouched.
     let density = u.fog.w * mix(1.0, u.present.y, step(0.5, u.present.x));
-    let f = 1.0 - exp(-dist * density);
+    let below = clamp((u.cam_pos.y - world_pos.y) / 40.0, 0.0, 1.0);
+    let f = 1.0 - exp(-dist * density * (1.0 + 0.25 * below));
     let sun_amt = pow(max(dot(dir, u.sun_dir.xyz), 0.0), 5.0);
     let fog_col = u.fog.rgb + u.sun_glow.rgb * sun_amt * 0.30;
     return mix(col, fog_col, clamp(f, 0.0, 1.0));
