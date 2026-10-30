@@ -24,6 +24,11 @@
 //!   two reads changes what the next `current`,
 //!   `advance`, or `choose` sees. The engine stores
 //!   facts; it never sets one itself.
+//! - The session keeps a per-conversation record of
+//!   every line flow arrives at (including repeat
+//!   arrivals) and every successful choice. Starting
+//!   a new conversation resets that record; facts do
+//!   not reset.
 //!
 //! The cue handed to the UI box is
 //! [`crate::ui::DialogueCue`], derived at each read:
@@ -103,12 +108,37 @@ impl Current<'_> {
     }
 }
 
-/// One conversation's runtime state: the lines and
-/// where flow currently sits (`None` once finished).
+/// One conversation's runtime state: the lines,
+/// where flow currently sits (`None` once finished),
+/// and the tracking record for this conversation.
 #[derive(Debug, Clone)]
 struct Conversation {
     lines: Vec<Line>,
     pos: Option<usize>,
+    visited: Vec<String>,
+    visit_counts: Vec<(String, usize)>,
+    choices_taken: Vec<(String, usize)>,
+}
+
+impl Conversation {
+    /// Record an arrival at the current line. Repeat
+    /// arrivals are appended and counted again.
+    fn record_visit(&mut self) {
+        let Some(idx) = self.pos else {
+            return;
+        };
+        let id = self.lines[idx].id.clone();
+        self.visited.push(id.clone());
+        if let Some((_, count)) = self
+            .visit_counts
+            .iter_mut()
+            .find(|(seen, _)| seen == &id)
+        {
+            *count += 1;
+        } else {
+            self.visit_counts.push((id, 1));
+        }
+    }
 }
 
 /// The dialogue session: the host's facts and the
@@ -151,7 +181,9 @@ impl Dialogue {
     ///
     /// Flow starts at the first visible line; if
     /// every line is gated off, the conversation is
-    /// finished from the start.
+    /// finished from the start. Starting resets the
+    /// visited and choices-taken records; the facts
+    /// persist.
     pub fn start(&mut self, lines: Vec<Line>) -> Result<(), DialogueError> {
         if let Some(c) = &self.active {
             if c.pos.is_some() {
@@ -179,7 +211,15 @@ impl Dialogue {
             }
         }
         let pos = resolve_visible(&lines, &self.facts, Some(0));
-        self.active = Some(Conversation { lines, pos });
+        let mut conversation = Conversation {
+            lines,
+            pos,
+            visited: Vec::new(),
+            visit_counts: Vec::new(),
+            choices_taken: Vec::new(),
+        };
+        conversation.record_visit();
+        self.active = Some(conversation);
         Ok(())
     }
 
@@ -220,6 +260,7 @@ impl Dialogue {
         let next = resolve_visible(&lines, &self.facts, successor(&lines, idx));
         let conv = self.active.as_mut().expect("position checked");
         conv.pos = next;
+        conv.record_visit();
         Ok(())
     }
 
@@ -247,8 +288,11 @@ impl Dialogue {
         }
         let target = index_of(&lines, &picked.target).expect("target validated at start");
         let next = resolve_visible(&lines, &self.facts, Some(target));
+        let line_id = lines[idx].id.clone();
         let conv = self.active.as_mut().expect("position checked");
+        conv.choices_taken.push((line_id, index));
         conv.pos = next;
+        conv.record_visit();
         Ok(())
     }
 
@@ -259,6 +303,46 @@ impl Dialogue {
         match &self.active {
             None => true,
             Some(c) => c.pos.is_none(),
+        }
+    }
+
+    /// Line ids in the order flow presented them in
+    /// the current conversation. A line reached more
+    /// than once appears once per arrival. The record
+    /// remains readable after the conversation
+    /// finishes, until the next `start` resets it.
+    pub fn visited(&self) -> &[String] {
+        match &self.active {
+            Some(c) => &c.visited,
+            None => &[],
+        }
+    }
+
+    /// Per-line visit counts for the current
+    /// conversation, in first-presentation order.
+    pub fn visit_counts(&self) -> &[(String, usize)] {
+        match &self.active {
+            Some(c) => &c.visit_counts,
+            None => &[],
+        }
+    }
+
+    /// How many times flow has presented `id` in the
+    /// current conversation.
+    pub fn visit_count(&self, id: &str) -> usize {
+        self.visit_counts()
+            .iter()
+            .find(|(seen, _)| seen == id)
+            .map_or(0, |(_, count)| *count)
+    }
+
+    /// Choices taken in the current conversation, as
+    /// `(line id, presented option index)` pairs in
+    /// the order they were chosen.
+    pub fn choices_taken(&self) -> &[(String, usize)] {
+        match &self.active {
+            Some(c) => &c.choices_taken,
+            None => &[],
         }
     }
 
