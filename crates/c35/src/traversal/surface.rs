@@ -4,10 +4,10 @@
 //! fields, the wall-run prices wetness from these fields, and the
 //! grapple reads biteability from these fields. There is exactly one
 //! record shape, and no traversal-local override flag anywhere: a
-//! wet wall is wet because the record says so, and the weather
-//! engine (ABSENT, not built here) will one day write that value.
-//! Until then, courses exercise dry and wet values through the
-//! record itself.
+//! wet wall is wet because the record says so. The weather module
+//! ([`crate::weather::Atmosphere::paint_surface`]) is the writer;
+//! courses may still set a wetness directly, and a wetter record
+//! is kept when the hour is lighter.
 
 /// What a surface is made of. Deliberately coarse: the record
 /// prices behavior, not appearance — painters own appearance.

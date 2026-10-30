@@ -24,6 +24,7 @@
 //!        the M5 fast-pan stress. Shipped runs never set it.)
 //!        [--present classic|ps15] [--ps15-fog 2.0]
 //!        [--operator stand|aim|crouch]
+//!        [--weather]  (clock-seeded rain/cloud; off keeps the frame unchanged)
 //!
 //! M6 rig seams: `--present ps15` selects the PS1.5 presentation
 //! (480p-class internal frame, palette grade, fog look multiplier
@@ -275,6 +276,7 @@ fn main() {
     let move_cam = arg_value(&args, "--move-cam").unwrap_or_else(|| "follow".to_string());
     let move_ghost = args.iter().any(|a| a == "--move-ghost");
     let frames_given = args.iter().any(|a| a == "--frames");
+    let weather_on = args.iter().any(|a| a == "--weather");
     let vel_reject: Option<(f32, f32)> = arg_value(&args, "--vel-reject").and_then(|v| {
         let mut p = v.split(',');
         Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?))
@@ -302,6 +304,9 @@ fn main() {
     }
     if let Some((gain, thresh)) = vel_reject {
         renderer.set_velocity_rejection(gain, thresh);
+    }
+    if weather_on {
+        renderer.set_atmosphere(c35::weather::Atmosphere::at(world.unix_seconds));
     }
 
     // Presentation + operator (also before any frame, governor
@@ -578,6 +583,9 @@ fn main() {
     println!("anti-aliasing    : {}", renderer.aa_description());
     println!("draw calls/frame : {}", renderer.draw_calls_per_frame());
     println!("triangles/frame  : {}", renderer.triangles_per_frame());
+    if weather_on {
+        println!("{}", renderer.atmosphere().ledger_line());
+    }
     println!(
         "tracked vram     : {:.2} MiB (engine-tracked allocations, estimate)",
         renderer.tracked_vram_bytes() as f64 / (1024.0 * 1024.0)

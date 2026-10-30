@@ -57,6 +57,7 @@ pub mod scene;
 pub mod sound;
 pub mod traversal;
 pub mod vista;
+pub mod weather;
 pub mod world;
 
 /// Re-exported so hosts build against exactly the engine's wgpu.
@@ -142,6 +143,22 @@ struct ResolveUniforms {
 struct BloomParams {
     dir: [f32; 2],
     pad: [f32; 2],
+}
+
+/// Weather sheet / veil uniform. Its own buffer, bound only by the
+/// rain and cloud pipelines (group 1), so the shared scene uniform
+/// block is not resized. Written in `render` only on hours that
+/// actually draw.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct WeatherGpu {
+    cam_right: [f32; 4],
+    cam_up: [f32; 4],
+    cam_fwd: [f32; 4],
+    /// x rain, y wetness, z wind x, w wind z.
+    params: [f32; 4],
+    /// x cloud cover, y tan(fov/2)*aspect, z tan(fov/2), w sheet distance.
+    extra: [f32; 4],
 }
 
 /// Which anti-aliasing the renderer runs — decided from the adapter's
@@ -575,6 +592,14 @@ pub struct Renderer {
     last_draw_calls: u32,
     last_shadow_draw_calls: u32,
     last_shadow_active: bool,
+    /// Weather opt-in. [`weather::Atmosphere::clear`] draws nothing
+    /// and leaves fog alone. Hosts call [`Renderer::set_atmosphere`].
+    atmosphere: weather::Atmosphere,
+    rain_pipeline: wgpu::RenderPipeline,
+    cloud_pipeline: wgpu::RenderPipeline,
+    weather_buf: wgpu::Buffer,
+    weather_bind_group: wgpu::BindGroup,
+    last_atmo_tris: u64,
 }
 
 pub fn create_instance() -> wgpu::Instance {
@@ -1313,6 +1338,103 @@ impl Renderer {
             cache: None,
         });
 
+        // Weather: rain sheet + cloud veil. Own uniform, own pipelines,
+        // alpha blended like water. Absent hours never bind them.
+        let weather_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("weather uniform"),
+            size: std::mem::size_of::<WeatherGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let weather_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("weather layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let weather_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("weather bind group"),
+            layout: &weather_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: weather_buf.as_entire_binding(),
+            }],
+        });
+        let weather_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("weather pipeline layout"),
+                bind_group_layouts: &[&scene_layout, &weather_layout],
+                push_constant_ranges: &[],
+            });
+        let rain_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("weather"),
+            source: wgpu::ShaderSource::Wgsl(shader_src(include_str!("shaders/rain.wgsl")).into()),
+        });
+        let rain_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rain pipeline"),
+            layout: Some(&weather_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &rain_module,
+                entry_point: Some("vs_rain"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rain_module,
+                entry_point: Some("fs_rain"),
+                compilation_options: Default::default(),
+                targets: &water_color_target,
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let cloud_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("cloud pipeline"),
+            layout: Some(&weather_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &rain_module,
+                entry_point: Some("vs_cloud"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rain_module,
+                entry_point: Some("fs_cloud"),
+                compilation_options: Default::default(),
+                targets: &water_color_target,
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                // The veil is drawn before terrain, which overwrites the
+                // ground. Depth compare Always so a sky pixel (depth
+                // still clear) always receives it.
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         // Depth-only caster pipeline for the shadow pass. Front faces are
         // culled so the map stores back-face depth (the standard trick
         // against heightfield self-acne).
@@ -2022,6 +2144,12 @@ impl Renderer {
             last_draw_calls: 0,
             last_shadow_draw_calls: 0,
             last_shadow_active: false,
+            atmosphere: weather::Atmosphere::clear(),
+            rain_pipeline,
+            cloud_pipeline,
+            weather_buf,
+            weather_bind_group,
+            last_atmo_tris: 0,
         };
         renderer.shadow_attach = Some((shadow_tex, shadow_attach_view));
         renderer.resize(width, height);
@@ -2340,6 +2468,18 @@ impl Renderer {
 
     pub fn shadow_active(&self) -> bool {
         self.last_shadow_active
+    }
+
+    /// The atmosphere the next frame will draw. The default is
+    /// [`weather::Atmosphere::clear`]: no extra draws, fog untouched.
+    pub fn atmosphere(&self) -> weather::Atmosphere {
+        self.atmosphere
+    }
+
+    /// Opt the vista into a weather reading. Clear skips the rain
+    /// sheet and the cloud veil and leaves the fog density alone.
+    pub fn set_atmosphere(&mut self, atmosphere: weather::Atmosphere) {
+        self.atmosphere = atmosphere;
     }
 
     /// Scene-pass triangles submitted by the most recent frame (terrain
@@ -2889,7 +3029,14 @@ impl Renderer {
                 world.fog_color.x,
                 world.fog_color.y,
                 world.fog_color.z,
-                world.fog_density,
+                // Clear weather is exactly 1: the multiply is skipped
+                // so a run that never opted in keeps the reality layer's
+                // density bit for bit.
+                if self.atmosphere.fog_mul == 1.0 {
+                    world.fog_density
+                } else {
+                    world.fog_density * self.atmosphere.fog_mul
+                },
             ],
             season: [
                 world.cold,
@@ -2932,6 +3079,34 @@ impl Renderer {
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
+
+        let atmo = self.atmosphere;
+        if atmo.rain_active() || atmo.cloud_active() {
+            let fwd = pose.target - pose.eye;
+            let fwd = if fwd.length_squared() > 1e-8 {
+                fwd.normalize()
+            } else {
+                Vec3::new(0.0, 0.0, -1.0)
+            };
+            let right = fwd.cross(Vec3::Y);
+            let right = if right.length_squared() > 1e-8 {
+                right.normalize()
+            } else {
+                Vec3::X
+            };
+            let up = right.cross(fwd);
+            let half_h = (pose.fov_y_deg.to_radians() * 0.5).tan();
+            let half_w = half_h * aspect;
+            let gpu = WeatherGpu {
+                cam_right: [right.x, right.y, right.z, 0.0],
+                cam_up: [up.x, up.y, up.z, 0.0],
+                cam_fwd: [fwd.x, fwd.y, fwd.z, 0.0],
+                params: [atmo.rain, atmo.wetness, atmo.wind.x, atmo.wind.y],
+                extra: [atmo.cloud, half_w, half_h, weather::RAIN_SHEET_DISTANCE],
+            };
+            self.queue
+                .write_buffer(&self.weather_buf, 0, bytemuck::cast_slice(&[gpu]));
+        }
 
         if self.aa_mode == AaMode::Taa {
             let ru = ResolveUniforms {
@@ -3071,6 +3246,15 @@ impl Renderer {
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
             pass.set_pipeline(&self.sky_pipeline);
             pass.draw(0..3, 0..1);
+            let mut atmo_draws = 0u32;
+            if atmo.cloud_active() {
+                // Before terrain, so the ground overwrites the veil and
+                // the sky keeps it.
+                pass.set_pipeline(&self.cloud_pipeline);
+                pass.set_bind_group(1, &self.weather_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+                atmo_draws += 1;
+            }
             pass.set_pipeline(&self.terrain_pipeline);
             pass.set_vertex_buffer(0, self.merged_vb.slice(..));
             pass.set_index_buffer(self.merged_ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -3124,7 +3308,13 @@ impl Renderer {
                 pass.draw(0..6, 0..1);
                 water_draws = 1;
             }
-            draw_calls += 1 + terrain_draws + operator_draws + props_draws + water_draws;
+            if atmo.rain_active() {
+                pass.set_pipeline(&self.rain_pipeline);
+                pass.set_bind_group(1, &self.weather_bind_group, &[]);
+                pass.draw(0..6, 0..1);
+                atmo_draws += 1;
+            }
+            draw_calls += 1 + terrain_draws + operator_draws + props_draws + water_draws + atmo_draws;
         }
         if self.cull_mode == CullMode::Gpu {
             if let Some(gc) = &self.gpu_cull {
@@ -3314,7 +3504,9 @@ impl Renderer {
         } else {
             self.cull_stats().tris_after + 2
         };
-        self.last_tris = vista_tris + 1 + 1 + self.operator_tris + self.props_tris;
+        let atmo_tris = self.atmosphere.triangle_count();
+        self.last_atmo_tris = atmo_tris;
+        self.last_tris = vista_tris + 1 + 1 + self.operator_tris + self.props_tris + atmo_tris;
         let vista_shadow_tris = if self.vista_suppressed {
             0
         } else {

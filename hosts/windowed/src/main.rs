@@ -13,6 +13,7 @@
 //! window shows the world as it is, where you are, now.
 //!
 //!   COMIGEN_LAT=41.88 cargo run -p comigen-windowed
+//!   COMIGEN_WEATHER=1   opt into clock-seeded rain and cloud (off by default)
 //!
 //! The cost ledger rides in the title bar (frame ms, GPU pass ms, draw
 //! calls, backend, the sun's elevation and the season in force); the full
@@ -122,6 +123,8 @@ struct App {
     last_frame: Instant,
     frame_ema_ms: f64,
     frame_count: u64,
+    /// `COMIGEN_WEATHER=1` opts the vista into [`c35::weather`].
+    weather: bool,
 }
 
 impl App {
@@ -148,6 +151,7 @@ impl App {
             last_frame: Instant::now(),
             frame_ema_ms: 0.0,
             frame_count: 0,
+            weather: std::env::var("COMIGEN_WEATHER").ok().as_deref() == Some("1"),
         }
     }
 
@@ -305,6 +309,7 @@ impl App {
         self.world = Some(world);
         let pose = self.current_pose();
         let time = self.start.elapsed().as_secs_f32();
+        let weather_on = self.weather;
 
         // Phase 2 — GPU work (field borrows only; no &mut self calls).
         let mut outdated = false;
@@ -316,6 +321,9 @@ impl App {
                     let view = frame
                         .texture
                         .create_view(&c35::wgpu::TextureViewDescriptor::default());
+                    if weather_on {
+                        renderer.set_atmosphere(c35::weather::Atmosphere::at(world.unix_seconds));
+                    }
                     renderer.render(&view, &pose, &world, time);
                     frame.present();
                     // The governor eats the frame's wall time (vsync-bound
@@ -442,6 +450,10 @@ impl ApplicationHandler for App {
             world.cold, world.autumn, world.spring, world.summer
         );
         println!("controls         : drift until input · click = mouse capture · WASD/QE fly · Shift = speed · Esc = release · idle 8 s = drift returns · 0-4 = governor pin · ` = unpin");
+        if self.weather {
+            let reading = c35::weather::Atmosphere::at(world.unix_seconds);
+            println!("{}", reading.ledger_line());
+        }
         self.world = Some(world);
     }
 
