@@ -49,6 +49,7 @@ pub mod acoustics;
 pub mod ecs;
 pub mod governor;
 pub mod locomotion;
+pub mod modding;
 mod mesh_buffers;
 pub use mesh_buffers::MeshUploadStats;
 use mesh_buffers::MeshBuffers;

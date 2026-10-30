@@ -321,7 +321,7 @@ fn main() {
         prev_ankle = Some(ankle_world(&frame, a.pos, a.yaw, anim.ground_y()));
 
         // Mesh build cost (the per-frame CPU price of the pose).
-        if frames % 24 == 0 {
+        if frames.is_multiple_of(24) {
             let s = Instant::now();
             let mesh = build_operator_frame(&frame, Vec3::new(a.pos.x, 0.0, a.pos.y), anim.ground_y(), a.yaw.to_degrees());
             build_us += s.elapsed().as_secs_f64() * 1e6;
@@ -408,11 +408,11 @@ fn main() {
             continue;
         }
         println!("  {} ({} samples):", names[b], census[b].n);
-        for i in 0..BONE_COUNT {
+        for (i, bone_name) in BONE_NAMES.iter().enumerate() {
             let (mn, mx) = (census[b].min[i], census[b].max[i]);
             println!(
                 "    {:10} x [{:7.1},{:7.1}]  y [{:7.1},{:7.1}]  z [{:7.1},{:7.1}]",
-                BONE_NAMES[i], mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]
+                bone_name, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]
             );
         }
     }
@@ -545,3 +545,4 @@ fn metric_turn(gait: Gait, radius: f32) {
         peak_rate.to_degrees()
     );
 }
+

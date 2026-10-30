@@ -45,7 +45,7 @@ fn footsteps_are_contact_edges_at_the_ground_surface() {
         carry: true,
     };
     let mut count = 0;
-    let mut feet = [0; 2];
+    let mut feet = [0i32; 2];
     for _ in 0..600 {
         input.pos.z += input.speed / 120.0;
         animator.update(1.0 / 120.0, &input);
@@ -60,7 +60,7 @@ fn footsteps_are_contact_edges_at_the_ground_surface() {
         (10..=14).contains(&count),
         "five seconds of walk produced {count} contacts"
     );
-    assert!((feet[0] as i32 - feet[1] as i32).abs() <= 1);
+    assert!((feet[0] - feet[1]).abs() <= 1);
     input.speed = 0.0;
     for _ in 0..120 {
         animator.update(1.0 / 120.0, &input);

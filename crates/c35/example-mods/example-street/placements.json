@@ -1,0 +1,23 @@
+{
+    "placements": [
+        {
+            "anchor": "mercer-street:east-kerb",
+            "prop": "example-street:fruit-cart",
+            "variant": {
+                "awning_height": 1.8
+            }
+        },
+        {
+            "position": [
+                2.0,
+                0.0,
+                8.0
+            ],
+            "prop": "greyport:lamp-post",
+            "variant": {
+                "height": 4.2
+            }
+        }
+    ]
+}
+

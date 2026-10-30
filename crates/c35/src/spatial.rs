@@ -175,7 +175,7 @@ impl TriangleBvh {
     }
 
     pub fn from_indexed(positions: &[Vec3], indices: &[u32]) -> Result<Self, MeshQueryError> {
-        if indices.len() % 3 != 0 {
+        if !indices.len().is_multiple_of(3) {
             return Err(MeshQueryError(
                 "triangle indices must be a multiple of three",
             ));

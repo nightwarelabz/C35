@@ -337,7 +337,7 @@ impl App {
                     self.frame_count += 1;
 
                     // The ledger rides the title bar.
-                    if self.frame_count % 30 == 0 {
+                    if self.frame_count.is_multiple_of(30) {
                         let (shadow_ms, scene_ms) = renderer.drain_gpu_samples();
                         let gpu = if scene_ms.is_empty() {
                             "gpu n/a".to_string()

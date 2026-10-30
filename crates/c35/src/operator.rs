@@ -1115,8 +1115,8 @@ impl PoseFrame {
     /// needed: every angle in play stays well inside ±180°).
     pub fn lerp(&self, other: &PoseFrame, t: f32) -> PoseFrame {
         let mut angles = [Vec3::ZERO; BONE_COUNT];
-        for i in 0..BONE_COUNT {
-            angles[i] = self.angles[i].lerp(other.angles[i], t);
+        for (i, angle) in angles.iter_mut().enumerate() {
+            *angle = self.angles[i].lerp(other.angles[i], t);
         }
         PoseFrame {
             angles,

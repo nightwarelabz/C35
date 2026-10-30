@@ -255,7 +255,7 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
         let mut x = r.0 as i32 - off as i32;
         while x < (r.0 + r.2) as i32 {
             let tone = 0.82 + (rng.next() % 36) as f32 / 100.0;
-            let c = if rng.next() % 7 == 0 { dark } else { base };
+            let c = if rng.next().is_multiple_of(7) { dark } else { base };
             let c = [
                 (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
                 (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
@@ -584,3 +584,4 @@ pub fn generate_city_atlas() -> Vec<u8> {
     }
     a.px
 }
+

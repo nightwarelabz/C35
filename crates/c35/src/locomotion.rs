@@ -478,9 +478,7 @@ impl Animator {
                 }
             }
             leg.contact = in_contact;
-            let target = if in_contact {
-                leg.plant
-            } else if slide >= 0.5 {
+            let target = if in_contact || slide >= 0.5 {
                 leg.plant
             } else {
                 // Swing: the ankle rides a phase-relative trajectory

@@ -134,6 +134,7 @@ ticks=600 contacts=12 occluded_samples=294 live_sounds=1 evicted=0 dropped=0ns r
 ```sh
 cargo test --workspace --locked
 cargo check --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked
 cargo check -p comigen-web --target wasm32-unknown-unknown --locked
 cargo run -p c35 --example systems_probe --locked
 cargo run --release -p c35 --example skinning_probe --locked

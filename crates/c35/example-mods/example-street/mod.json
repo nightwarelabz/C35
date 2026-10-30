@@ -1,0 +1,9 @@
+{
+    "author": "NIGHTWARE LABZ",
+    "description": "The shipped example mod: one reused shipped prop with overrides, one new prop, one placement rule each. Copy this folder and change the names to start a mod.",
+    "engine": ">=0.1 <0.2",
+    "id": "example-street",
+    "name": "Example Street",
+    "version": "0.1.0"
+}
+
