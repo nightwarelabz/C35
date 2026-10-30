@@ -32,6 +32,7 @@ use crate::perception::sound::{propagate_one, DistrictKind, DistrictStimulus};
 use crate::sound::footsteps::footstep_voice;
 use crate::sound::mixer::{Mixer, SoundLedger, SAMPLE_RATE};
 use crate::sound::music::MusicBed;
+use crate::sound::rain::RainBed;
 use crate::sound::voices;
 use crate::sound::VoiceKind;
 use crate::traversal::events::{StimulusEvent, StimulusKind};
@@ -43,6 +44,7 @@ pub struct Playback {
     facing: Vec3,
     right: Vec3,
     music: MusicBed,
+    rain: RainBed,
 }
 
 impl Playback {
@@ -53,7 +55,15 @@ impl Playback {
             facing: Vec3::new(0.0, 0.0, -1.0),
             right: Vec3::X,
             music: MusicBed::new(),
+            rain: RainBed::new(),
         }
+    }
+
+    /// Drive the procedural rain bed. `intensity` is 0 (dry) to
+    /// 1 (downpour). A dry call before any rain does not take a
+    /// mixer slot.
+    pub fn set_rain(&mut self, intensity: f32) {
+        self.rain.set_intensity(&mut self.mixer, intensity);
     }
 
     pub fn with_default_rate(seed: u64) -> Playback {

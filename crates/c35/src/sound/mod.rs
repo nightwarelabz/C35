@@ -27,6 +27,7 @@ pub mod footsteps;
 pub mod mixer;
 pub mod music;
 pub mod playback;
+pub mod rain;
 pub mod synth;
 pub mod voices;
 
@@ -34,6 +35,7 @@ pub use footsteps::{footstep_voice, from_mod_footstep};
 pub use mixer::{Mixer, SoundLedger, MAX_VOICES, SAMPLE_RATE};
 pub use music::{MusicBed, MusicState};
 pub use playback::Playback;
+pub use rain::{RainBed, RainLoop};
 pub use synth::{Rng, VoiceGen};
 pub use voices::{
     cannon_cool_voice, churr_voice, grapple_detach_voice, grapple_launch_voice,
@@ -67,10 +69,13 @@ pub enum VoiceKind {
     Tremor = 14,
     Churr = 15,
     Music = 16,
+    /// Procedural rain bed. Sticky, not a one-shot. Added at the
+    /// end so existing ledger indices do not move.
+    Rain = 17,
 }
 
 impl VoiceKind {
-    pub const COUNT: usize = 17;
+    pub const COUNT: usize = 18;
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -91,6 +96,7 @@ impl VoiceKind {
             VoiceKind::Tremor => "tremor",
             VoiceKind::Churr => "churr",
             VoiceKind::Music => "music",
+            VoiceKind::Rain => "rain",
         }
     }
 
@@ -124,6 +130,8 @@ impl VoiceKind {
             13 => VoiceKind::Report,
             14 => VoiceKind::Tremor,
             15 => VoiceKind::Churr,
+            16 => VoiceKind::Music,
+            17 => VoiceKind::Rain,
             _ => VoiceKind::Music,
         }
     }

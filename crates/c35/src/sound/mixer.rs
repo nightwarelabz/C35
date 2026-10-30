@@ -96,6 +96,10 @@ struct Slot {
     muffled: bool,
     lp: Lowpass,
     stem: Option<StemKind>,
+    kind: VoiceKind,
+    /// Sticky slots (the rain bed) are never stolen. Stems are
+    /// protected separately, by `stem`.
+    sticky: bool,
     dead: bool,
 }
 
@@ -134,9 +138,9 @@ impl Mixer {
     }
 
     /// Spawn a one-shot voice. If every slot is busy, the
-    /// quietest non-stem slot is stolen (ties: lowest
-    /// index); if every slot is a stem, the voice is
-    /// dropped and counted — never a crash, never a hang.
+    /// quietest non-stem, non-sticky slot is stolen (ties:
+    /// lowest index); if every slot is protected, the voice
+    /// is dropped and counted — never a crash, never a hang.
     pub fn play(
         &mut self,
         gen: Box<dyn VoiceGen>,
@@ -154,6 +158,8 @@ impl Mixer {
             muffled,
             lp: Lowpass::new(MUFFLE_CUTOFF_HZ, self.sample_rate as f32),
             stem: None,
+            kind,
+            sticky: false,
             dead: false,
         };
         if self.slots.len() < MAX_VOICES {
@@ -161,11 +167,11 @@ impl Mixer {
             self.ledger.record_start(kind);
             return;
         }
-        // Steal the quietest non-stem slot, lowest index on ties.
+        // Steal the quietest unprotected slot, lowest index on ties.
         let mut victim: Option<usize> = None;
         let mut victim_gain = f32::INFINITY;
         for (i, s) in self.slots.iter().enumerate() {
-            if s.stem.is_some() {
+            if s.stem.is_some() || s.sticky {
                 continue;
             }
             if s.gain < victim_gain {
@@ -200,9 +206,59 @@ impl Mixer {
             muffled: false,
             lp: Lowpass::new(MUFFLE_CUTOFF_HZ, self.sample_rate as f32),
             stem: Some(stem),
+            kind: VoiceKind::Music,
+            sticky: false,
             dead: false,
         });
         self.ledger.record_start(VoiceKind::Music);
+    }
+
+    /// Spawn a voice that stealing never takes (the rain bed).
+    /// A second call for the same kind retargets the gain instead
+    /// of stacking a slot. Returns false only when the bus is
+    /// already full and the voice had to be dropped.
+    pub fn play_sticky(&mut self, gen: Box<dyn VoiceGen>, kind: VoiceKind, gain: f32) -> bool {
+        let gain = gain.clamp(0.0, 1.0);
+        if self
+            .slots
+            .iter()
+            .any(|s| s.sticky && s.kind == kind && !s.dead)
+        {
+            self.set_kind_gain(kind, gain);
+            return true;
+        }
+        if self.slots.len() >= MAX_VOICES {
+            self.ledger.record_drop();
+            return false;
+        }
+        self.slots.push(Slot {
+            gen,
+            gain,
+            pan: 0.0,
+            muffled: false,
+            lp: Lowpass::new(MUFFLE_CUTOFF_HZ, self.sample_rate as f32),
+            stem: None,
+            kind,
+            sticky: true,
+            dead: false,
+        });
+        self.ledger.record_start(kind);
+        true
+    }
+
+    /// Set the gain of every sticky slot of `kind`. Returns
+    /// whether one was found. One-shots of the same kind are
+    /// left alone.
+    pub fn set_kind_gain(&mut self, kind: VoiceKind, gain: f32) -> bool {
+        let gain = gain.clamp(0.0, 1.0);
+        let mut found = false;
+        for slot in self.slots.iter_mut() {
+            if slot.sticky && slot.kind == kind && !slot.dead {
+                slot.gain = gain;
+                found = true;
+            }
+        }
+        found
     }
 
     /// Set a stem's gain (the bed's crossfade writes here).
