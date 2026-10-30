@@ -53,6 +53,7 @@ pub mod noise;
 pub mod operator;
 pub mod props;
 pub mod scene;
+pub mod traversal;
 pub mod vista;
 pub mod world;
 
