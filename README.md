@@ -414,7 +414,7 @@ hardware the same ledger is the first thing to look at.)
 
 ```
 crates/c35/          the engine (ECS core, governor, renderer, world/reality layer, scene, noise, shaders,
-                     operator, props, locomotion, modding, traversal, perception, sound, weather)
+                     operator, props, locomotion, modding, traversal, perception, sound, weather, ui, persist)
 crates/c35/examples/ probes and demos (cargo run -p c35 --example <name>)
 crates/c35/example-mods/  the shipped example mod (example-street)
 hosts/native/        headless proof host: offscreen run, ledger, hero PNG
@@ -422,8 +422,7 @@ hosts/windowed/      windowed host: the vista live, free-fly camera, title-bar l
 hosts/web/           browser host: same vista on a canvas, on-page ledger
 ```
 
-`hosts/debrief/` is still in the tree but is not a workspace member —
-the game moved to nightwarelabz/DeBrief; the directory is a vestigial copy.
+`hosts/debrief/` was removed (PR #21); the game lives in nightwarelabz/DeBrief.
 
 ## Build & run
 
@@ -512,7 +511,7 @@ Engine examples (probes and demos in `crates/c35/examples/`):
 cargo run --release -p c35 --example <name>
 # ao_probe check_mod frustum_probe heights movement_probe op_study
 # operator_probe perception_demo sound_demo traversal_course
-# weather_demo world_probe
+# weather_demo world_probe ui_demo persist_demo rain_probe
 cargo run -p c35 --example check_mod -- crates/c35/example-mods/example-street
 ```
 
@@ -542,6 +541,10 @@ deterministic software mixer, synthesized voices, music bed hooks
 (`sound/`); and weather — a seeded regime driving rain, wind, fog and
 wetness, plus lightning (`weather/`). The M6 record below stands as
 written.
+
+After c158214: UI/text landed (`ui/`, `ui_demo`), world persistence landed
+(`persist/`, `persist_demo`), and the sound rain bed landed (`sound/rain.rs`,
+`rain_probe`).
 
 M6: the PS1.5 presentation mode (480p-class internal frame,
 snapped texel surfaces, dithered palette grade, fog as a look

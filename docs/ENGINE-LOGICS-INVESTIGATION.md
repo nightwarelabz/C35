@@ -10,8 +10,9 @@ benchmarks, no proof chains. Chase decides what gets built next.
 > synthesized voices) and `weather/` (seeded regime, rain/wind/fog,
 > lightning). The "Has" lines and the module list below describe the
 > tree when this report was written. The design docs it cites other
-> than `ENGINE-REFERENCES.md`, `MOD-ENGINE.md`, `BEAUTY-PASS.md` and
-> `TRAVERSAL-BRIEF.md` live in the DeBrief repo's `docs/`, not here.
+> than `ENGINE-REFERENCES.md`, `MOD-ENGINE.md`, `BEAUTY-PASS.md`,
+> `TRAVERSAL-BRIEF.md` and `SUBSYSTEMS.md` live in the DeBrief repo's
+> `docs/`, not here.
 
 ## Standing rule — references only, everything from scratch
 
