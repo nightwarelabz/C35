@@ -95,6 +95,7 @@ const UP_EVALS_NEEDED: u32 = 8; // ~4 s of sustained headroom at cadence
 
 impl Governor {
     pub fn new(target_ms: f64) -> Governor {
+        let target_ms = if target_ms.is_finite() && target_ms > 0.0 { target_ms } else { 1000.0 / 60.0 };
         Governor {
             target_ms,
             level: 0,
@@ -112,7 +113,10 @@ impl Governor {
     /// Retarget the governor (rigs do this before the first frame; the
     /// ladder level and EMA are untouched).
     pub fn set_target(&mut self, target_ms: f64) {
-        self.target_ms = target_ms;
+        if target_ms.is_finite() && target_ms > 0.0 {
+            self.target_ms = target_ms;
+            self.headroom_evals = 0;
+        }
     }
 
     /// Place the ladder at a level WITHOUT pinning and WITHOUT logging
@@ -132,6 +136,7 @@ impl Governor {
     pub fn pin_to(&mut self, level: usize) {
         let level = level.min(MAX_LEVEL);
         self.pin = Some(level);
+        self.headroom_evals = 0;
         if level != self.level {
             self.adjustments.push(Adjustment {
                 frame: self.frames,
@@ -147,6 +152,8 @@ impl Governor {
 
     pub fn unpin(&mut self) {
         self.pin = None;
+        self.headroom_evals = 0;
+        self.since_change = 0;
     }
 
     pub fn is_pinned(&self) -> bool {
@@ -182,6 +189,11 @@ impl Governor {
     /// which in its own ledger. Returns true when the quality state
     /// changed and the renderer must re-apply it.
     pub fn observe(&mut self, ms: f64) -> bool {
+        // A bad timing source must not poison the EMA permanently or
+        // buy artificial cooldown/headroom. Paused hosts skip feeding it.
+        if !ms.is_finite() || ms <= 0.0 {
+            return false;
+        }
         self.frames += 1;
         self.since_change += 1;
         if self.frames == 1 || self.ema_ms == 0.0 {
@@ -235,3 +247,4 @@ impl Governor {
         self.headroom_evals = 0;
     }
 }
+

@@ -178,19 +178,14 @@ async fn run() {
         render_scale,
     )
     .await;
-    surface.configure(
-        &renderer.device,
-        &c35::wgpu::SurfaceConfiguration {
-            usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: renderer.output_format(),
-            width: WIDTH,
-            height: HEIGHT,
-            present_mode: c35::wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: 2,
-            alpha_mode: c35::wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-        },
-    );
+    let surface_config = c35::wgpu::SurfaceConfiguration {
+        usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: renderer.output_format(), width: WIDTH, height: HEIGHT,
+        present_mode: c35::wgpu::PresentMode::Fifo,
+        desired_maximum_frame_latency: 2,
+        alpha_mode: c35::wgpu::CompositeAlphaMode::Auto, view_formats: vec![],
+    };
+    surface.configure(&renderer.device, &surface_config);
     set_text("backend", &renderer.backend_name());
 
     // The rig's presentation seam (proof runs only; nothing on the
@@ -225,7 +220,11 @@ async fn run() {
             let mut st = state.borrow_mut();
             let delta = now - st.last_ms;
             st.last_ms = now;
+            if delta >= 1000.0 {
+                renderer.reset_history();
+            }
             if st.frames > 0 && delta > 0.0 && delta < 1000.0 {
+                renderer.observe_frame_ms(delta);
                 st.deltas.push(delta);
                 if st.deltas.len() > 240 {
                     st.deltas.remove(0);
@@ -343,9 +342,15 @@ async fn run() {
                 renderer.render(&view, &pose, &world, frame_dt);
                 frame.present();
             }
-            Err(_) => {
-                // Surface lost/outdated (tab resize etc.) — skip this frame.
+            Err(c35::wgpu::SurfaceError::Lost | c35::wgpu::SurfaceError::Outdated) => {
+                surface.configure(&renderer.device, &surface_config);
+                renderer.reset_history();
             }
+            Err(c35::wgpu::SurfaceError::OutOfMemory) => {
+                set_text("status", "GPU out of memory — rendering stopped");
+                return;
+            }
+            Err(_) => {}
         }
         web_sys::window()
             .unwrap()
@@ -364,3 +369,4 @@ struct State {
     drift_start: Option<f64>,
     ready: bool,
 }
+

@@ -105,6 +105,9 @@ struct App {
     surface_config: Option<c35::wgpu::SurfaceConfiguration>,
     renderer: Option<Renderer>,
     size: (u32, u32),
+    minimized: bool,
+    occluded: bool,
+    clock: c35::timing::FixedClock,
     scale: f32,
 
     lat: Option<f32>,
@@ -133,6 +136,9 @@ impl App {
             surface_config: None,
             renderer: None,
             size: (1280, 720),
+            minimized: false,
+            occluded: false,
+            clock: c35::timing::FixedClock::default(),
             scale: env_f32("COMIGEN_SCALE").unwrap_or(1.0),
             lat: env_f32("COMIGEN_LAT"),
             lon: env_f32("COMIGEN_LON"),
@@ -238,18 +244,21 @@ impl App {
         self.surface_config = Some(config);
     }
 
-    fn draw(&mut self) {
-        if self.surface.is_none() || self.renderer.is_none() {
-            return;
+    fn draw(&mut self) -> bool {
+        if self.surface.is_none() || self.renderer.is_none() || self.minimized || self.occluded {
+            return false;
         }
         // Phase 1 — housekeeping (all &mut self, no GPU borrows held).
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+        let elapsed = now - self.last_frame;
+        let wall_ms = elapsed.as_secs_f64() * 1000.0;
+        let ticks = self.clock.advance(elapsed);
+        let dt = ticks.ticks.len() as f32 * self.clock.step_seconds();
         self.last_frame = now;
         self.frame_ema_ms = if self.frame_ema_ms == 0.0 {
-            dt as f64 * 1000.0
+            wall_ms
         } else {
-            self.frame_ema_ms * 0.95 + dt as f64 * 1000.0 * 0.05
+            self.frame_ema_ms * 0.95 + wall_ms * 0.05
         };
 
         match &mut self.mode {
@@ -308,6 +317,7 @@ impl App {
 
         // Phase 2 — GPU work (field borrows only; no &mut self calls).
         let mut outdated = false;
+        let mut fatal = false;
         {
             let surface = self.surface.as_ref().unwrap();
             let renderer = self.renderer.as_mut().unwrap();
@@ -321,7 +331,9 @@ impl App {
                     // The governor eats the frame's wall time (vsync-bound
                     // on a real display — a healthy 60 Hz machine sits at
                     // target and the ladder simply never needs to move).
-                    renderer.observe_frame_ms(dt as f64 * 1000.0);
+                    if elapsed.as_secs_f64() < 1.0 && self.frame_count > 0 {
+                        renderer.observe_frame_ms(wall_ms);
+                    }
                     self.frame_count += 1;
 
                     // The ledger rides the title bar.
@@ -361,13 +373,19 @@ impl App {
                         }
                     }
                 }
-                Err(c35::wgpu::SurfaceError::Outdated) => outdated = true,
+                Err(c35::wgpu::SurfaceError::Outdated | c35::wgpu::SurfaceError::Lost) => outdated = true,
+                Err(c35::wgpu::SurfaceError::OutOfMemory) => {
+                    eprintln!("GPU surface out of memory; stopping the host");
+                    fatal = true;
+                },
                 Err(_) => {}
             }
         }
         if outdated {
             self.configure_surface();
+            if let Some(renderer) = &mut self.renderer { renderer.reset_history(); }
         }
+        fatal
     }
 }
 
@@ -454,6 +472,10 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
+                self.minimized = size.width == 0 || size.height == 0;
+                self.last_frame = Instant::now();
+                self.clock.reset_accumulator();
+                if self.minimized { return; }
                 self.size = (size.width.max(1), size.height.max(1));
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(self.size.0, self.size.1);
@@ -517,7 +539,20 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::Focused(focused) => {
+                self.keys.clear();
+                if !focused { self.grab(false); }
+                self.last_frame = Instant::now();
+                self.clock.reset_accumulator();
+                if let Some(renderer) = &mut self.renderer { renderer.reset_history(); }
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.occluded = occluded;
+                self.last_frame = Instant::now();
+                self.clock.reset_accumulator();
+                if let Some(renderer) = &mut self.renderer { renderer.reset_history(); }
+            }
+            WindowEvent::RedrawRequested => { if self.draw() { event_loop.exit(); } },
             _ => {}
         }
     }
@@ -538,6 +573,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.minimized || self.occluded {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
         event_loop.set_control_flow(ControlFlow::Poll);
         if let Some(window) = &self.window {
             window.request_redraw();
@@ -550,3 +589,4 @@ fn main() {
     let mut app = App::new();
     event_loop.run_app(&mut app).expect("run app");
 }
+

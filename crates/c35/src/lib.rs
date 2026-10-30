@@ -48,6 +48,9 @@
 pub mod ecs;
 pub mod governor;
 pub mod locomotion;
+mod mesh_buffers;
+pub use mesh_buffers::MeshUploadStats;
+use mesh_buffers::MeshBuffers;
 pub mod noise;
 pub mod operator;
 pub mod props;
@@ -127,6 +130,8 @@ struct ResolveUniforms {
     /// resolve height). Gain 0 = the term contributes exactly 0.0
     /// and the resolve is bit-identical to M1–M6.
     vel: [f32; 4],
+    /// Previous raster jitter, relative depth tolerance, absolute tolerance.
+    temporal: [f32; 4],
 }
 
 /// Which anti-aliasing the renderer runs — decided from the adapter's
@@ -281,8 +286,11 @@ struct Targets {
     /// PS1.5 mode (the resolve runs at presentation resolution).
     res_w: u32,
     res_h: u32,
+    present_mode: PresentMode,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    depth_tex: wgpu::Texture,
+    history_depth: Option<wgpu::Texture>,
     /// TAA: the history texture (previous resolved frame) + its view.
     history_tex: Option<wgpu::Texture>,
     blit_bind_group: wgpu::BindGroup,
@@ -431,6 +439,16 @@ impl GpuCull {
     }
 }
 
+/// Recoverable adapter/device initialization failure. Existing `new`
+/// constructors retain their convenience panic contract; hosts that can
+/// display a startup error should use the `try_new` variants.
+#[derive(Debug)]
+pub struct RendererInitError(pub String);
+impl std::fmt::Display for RendererInitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+}
+impl std::error::Error for RendererInitError {}
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -472,7 +490,7 @@ pub struct Renderer {
     /// the bind group above).
     #[allow(dead_code)]
     operator_atlas_tex: wgpu::Texture,
-    operator_bufs: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    operator_bufs: Option<MeshBuffers>,
     operator_tris: u64,
     operator_bytes: u64,
     /// Slice 1 props apparatus (DeBrief): static built-world
@@ -486,7 +504,8 @@ pub struct Renderer {
     /// Kept so the city atlas texture outlives build().
     #[allow(dead_code)]
     props_atlas_tex: wgpu::Texture,
-    props_bufs: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    props_bufs: Option<MeshBuffers>,
+    mesh_uploads: MeshUploadStats,
     props_tris: u64,
     props_bytes: u64,
     /// The wet pass's lamp set (Slice 1): a uniform buffer of up to
@@ -535,6 +554,7 @@ pub struct Renderer {
     scene_timer: Option<PassTimer>,
     frame_count: u64,
     prev_view_proj: Mat4,
+    prev_jitter: glam::Vec2,
     history_valid: bool,
     last_draw_calls: u32,
     last_shadow_draw_calls: u32,
@@ -570,43 +590,45 @@ impl Renderer {
     /// Headless build (native proof host): renders into owned textures of
     /// `output_format`.
     pub async fn new(
-        instance: &wgpu::Instance,
-        output_format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-        render_scale: f32,
+        instance: &wgpu::Instance, output_format: wgpu::TextureFormat,
+        width: u32, height: u32, render_scale: f32,
     ) -> Renderer {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("no GPU adapter available");
+        Self::try_new(instance, output_format, width, height, render_scale)
+            .await.expect("renderer initialization failed")
+    }
+
+    pub async fn try_new(
+        instance: &wgpu::Instance, output_format: wgpu::TextureFormat,
+        width: u32, height: u32, render_scale: f32,
+    ) -> Result<Renderer, RendererInitError> {
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None, force_fallback_adapter: false,
+        }).await.map_err(|e| RendererInitError(format!("no usable GPU adapter: {e}")))?;
         Self::build(adapter, output_format, width, height, render_scale).await
     }
 
-    /// Surface build (web + windowed hosts): adapter is matched to
-    /// `surface` and the output format is the surface's preferred format.
-    /// Read it back with `output_format()` to configure the surface.
+    /// Build for a surface, preferring an sRGB output format when offered.
     pub async fn new_for_surface(
-        instance: &wgpu::Instance,
-        surface: &wgpu::Surface<'_>,
-        width: u32,
-        height: u32,
-        render_scale: f32,
+        instance: &wgpu::Instance, surface: &wgpu::Surface<'_>,
+        width: u32, height: u32, render_scale: f32,
     ) -> Renderer {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .expect("no GPU adapter available");
+        Self::try_new_for_surface(instance, surface, width, height, render_scale)
+            .await.expect("surface renderer initialization failed")
+    }
+
+    pub async fn try_new_for_surface(
+        instance: &wgpu::Instance, surface: &wgpu::Surface<'_>,
+        width: u32, height: u32, render_scale: f32,
+    ) -> Result<Renderer, RendererInitError> {
+        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(surface), force_fallback_adapter: false,
+        }).await.map_err(|e| RendererInitError(format!("no surface-compatible GPU adapter: {e}")))?;
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats[0];
+        let format = caps.formats.iter().copied().find(|f| f.is_srgb())
+            .or_else(|| caps.formats.first().copied())
+            .ok_or_else(|| RendererInitError("surface offers no output formats".into()))?;
         Self::build(adapter, format, width, height, render_scale).await
     }
 
@@ -620,7 +642,14 @@ impl Renderer {
         width: u32,
         height: u32,
         render_scale: f32,
-    ) -> Renderer {
+    ) -> Result<Renderer, RendererInitError> {
+        let width = width.max(1);
+        let height = height.max(1);
+        let limit = adapter.limits().max_texture_dimension_2d;
+        if width > limit || height > limit {
+            return Err(RendererInitError(format!("output {width}x{height} exceeds texture limit {limit}")));
+        }
+        let render_scale = if render_scale.is_finite() { render_scale.clamp(0.25, 1.0) } else { 1.0 };
         let adapter_info = adapter.get_info();
         // TAA needs a sampled depth texture + a history resolve; the
         // WebGL2 backend is the one path where we do not trust that
@@ -643,7 +672,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .expect("failed to create device");
+            .map_err(|e| RendererInitError(format!("GPU device request failed: {e}")))?;
         let period_ns = queue.get_timestamp_period();
 
         // The job pool comes up first: tile generation runs through it.
@@ -870,6 +899,16 @@ impl Renderer {
                         binding: 4,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -1806,6 +1845,7 @@ impl Renderer {
             props_bind_group,
             props_atlas_tex: city_tex,
             props_bufs: None,
+            mesh_uploads: MeshUploadStats::default(),
             props_tris: 0,
             props_bytes: 0,
             props_lamp_buf,
@@ -1834,6 +1874,7 @@ impl Renderer {
             scene_timer,
             frame_count: 0,
             prev_view_proj: Mat4::IDENTITY,
+            prev_jitter: glam::Vec2::ZERO,
             history_valid: false,
             last_draw_calls: 0,
             last_shadow_draw_calls: 0,
@@ -1841,7 +1882,7 @@ impl Renderer {
         };
         renderer.shadow_attach = Some((shadow_tex, shadow_attach_view));
         renderer.resize(width, height);
-        renderer
+        Ok(renderer)
     }
 
     /// (Re)create the offscreen scene targets for an output of
@@ -1849,6 +1890,10 @@ impl Renderer {
     /// scale times the governor's current ladder scale — `resize` never
     /// second-guesses the governor.
     pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        let limit = self.device.limits().max_texture_dimension_2d;
+        assert!(width <= limit && height <= limit, "output dimensions exceed device limit {limit}");
         self.out_size = (width, height);
         let scale = (self.base_scale * self.quality.render_scale).clamp(0.25, 1.0);
         let mut sw = ((width as f32 * scale) as u32).max(1);
@@ -1864,6 +1909,15 @@ impl Renderer {
             if f < 1.0 {
                 sw = ((sw as f32 * f).round() as u32).max(1);
                 sh = ((sh as f32 * f).round() as u32).max(1);
+            }
+        }
+        if let Some(t) = &mut self.targets {
+            if t.width == width && t.height == height
+                && t.internal_w == sw && t.internal_h == sh
+                && t.present_mode == self.present_mode
+            {
+                t.scale = scale;
+                return;
             }
         }
         let size = wgpu::Extent3d {
@@ -1890,11 +1944,19 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+                | if self.aa_mode == AaMode::Taa { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() },
             view_formats: &[],
         });
         let color_view = color.create_view(&Default::default());
         let depth_view = depth.create_view(&Default::default());
+        let history_depth = (self.aa_mode == AaMode::Taa).then(|| self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("temporal history depth"), size,
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        }));
 
         // Temporal reconstruction chain: the resolve writes at OUTPUT
         // resolution — the resolved texture and the history are output-
@@ -1941,7 +2003,7 @@ impl Renderer {
             (
                 resolved.create_view(&Default::default()),
                 Some((history, resolved)),
-                (res_w * res_h) as u64 * 8, // resolved + history, 4 B/px each
+                u64::from(res_w) * u64::from(res_h) * 8,
             )
         } else {
             (color_view.clone(), None, 0u64)
@@ -1970,7 +2032,8 @@ impl Renderer {
         });
         // Internal colour+depth at 4 B/px each, plus the output-sized
         // reconstruction pair where TAA runs.
-        let bytes = (sw * sh) as u64 * 8 + extra_bytes;
+        let bytes = u64::from(sw) * u64::from(sh)
+            * if history_depth.is_some() { 12 } else { 8 } + extra_bytes;
         // Rebuild the resolve bind group against the fresh textures.
         if self.aa_mode == AaMode::Taa {
             let (hist, resolved) = history_tex.as_ref().unwrap();
@@ -2000,6 +2063,10 @@ impl Renderer {
                         binding: 4,
                         resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&history_depth.as_ref().unwrap().create_view(&Default::default())),
+                    },
                 ],
             });
             self.resolve_bind_group = Some(bg);
@@ -2015,8 +2082,11 @@ impl Renderer {
             internal_h: sh,
             res_w,
             res_h,
+            present_mode: self.present_mode,
             color_view,
             depth_view,
+            depth_tex: depth,
+            history_depth,
             history_tex: history_tex.map(|(h, _)| h),
             blit_bind_group,
             bytes,
@@ -2130,8 +2200,11 @@ impl Renderer {
     /// Switching re-sizes the targets at once. Hosts set this before
     /// their warmup frames, like the cull mode.
     pub fn set_present_mode(&mut self, mode: PresentMode, fog_mul: f32) {
+        let fog_mul = if fog_mul.is_finite() { fog_mul.max(0.0) } else { 1.0 };
+        if self.present_mode == mode && self.ps15_fog_mul == fog_mul { return; }
         self.present_mode = mode;
-        self.ps15_fog_mul = fog_mul.max(0.0);
+        self.ps15_fog_mul = fog_mul;
+        self.reset_history();
         let (w, h) = self.out_size;
         self.resize(w, h);
     }
@@ -2148,7 +2221,9 @@ impl Renderer {
     /// motion A/B is the evidence this ships on; a gain of 0.0 is
     /// arithmetically identical to the M1–M6 resolve.
     pub fn set_velocity_rejection(&mut self, gain: f32, threshold_px: f32) {
-        self.vel_reject = (gain.max(0.0), threshold_px.max(0.0));
+        if gain.is_finite() && threshold_px.is_finite() {
+            self.vel_reject = (gain.max(0.0), threshold_px.max(0.0));
+        }
     }
 
     pub fn velocity_rejection(&self) -> (f32, f32) {
@@ -2225,38 +2300,15 @@ impl Renderer {
     }
 
     fn upload_operator(&mut self, mesh: &operator::OperatorMesh) {
-        let vbytes: &[u8] = bytemuck::cast_slice(&mesh.vertices);
-        let ibytes: &[u8] = bytemuck::cast_slice(&mesh.indices);
-        let fits = match &self.operator_bufs {
-            Some((vb, ib, count)) => {
-                *count as usize == mesh.indices.len()
-                    && vb.size() == vbytes.len() as u64
-                    && ib.size() == ibytes.len() as u64
-            }
-            None => false,
-        };
-        if fits {
-            let (vb, ib, _) = self.operator_bufs.as_ref().unwrap();
-            self.queue.write_buffer(vb, 0, vbytes);
-            self.queue.write_buffer(ib, 0, ibytes);
-        } else {
-            let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("operator vertices"),
-                contents: vbytes,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-            let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("operator indices"),
-                contents: ibytes,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            });
-            self.operator_bufs = Some((vb, ib, mesh.indices.len() as u32));
-        }
+        self.operator_bytes = MeshBuffers::upload(
+            &mut self.operator_bufs, &self.device, &self.queue,
+            bytemuck::cast_slice(&mesh.vertices), &mesh.indices, &mut self.mesh_uploads,
+        );
         self.operator_tris = mesh.triangle_count();
-        self.operator_bytes = (mesh.vertices.len()
-            * std::mem::size_of::<operator::OperatorVertex>()
-            + mesh.indices.len() * 4) as u64;
     }
+
+    /// Cumulative bytes sent and allocations made by placed meshes.
+    pub fn mesh_upload_stats(&self) -> MeshUploadStats { self.mesh_uploads }
 
     /// Triangles the operator contributes when placed (0 when absent).
     pub fn operator_triangles(&self) -> u64 {
@@ -2276,23 +2328,11 @@ impl Renderer {
                 self.props_bytes = 0;
             }
             Some(m) => {
-                let vbytes: &[u8] = bytemuck::cast_slice(&m.vertices);
-                let ibytes: &[u8] = bytemuck::cast_slice(&m.indices);
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("props vertices"),
-                    contents: vbytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("props indices"),
-                    contents: ibytes,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                self.props_tris = (m.indices.len() / 3) as u64;
-                self.props_bytes = (m.vertices.len()
-                    * std::mem::size_of::<props::PropVertex>()
-                    + m.indices.len() * 4) as u64;
-                self.props_bufs = Some((vb, ib, m.indices.len() as u32));
+                self.props_bytes = MeshBuffers::upload(
+                    &mut self.props_bufs, &self.device, &self.queue,
+                    bytemuck::cast_slice(&m.vertices), &m.indices, &mut self.mesh_uploads,
+                );
+                self.props_tris = m.triangle_count();
             }
         }
     }
@@ -2321,8 +2361,13 @@ impl Renderer {
     /// draws — for hosts standing somewhere the island is not.
     /// Default off; every vista proof runs with it off.
     pub fn set_vista_suppressed(&mut self, suppressed: bool) {
+        if self.vista_suppressed != suppressed { self.reset_history(); }
         self.vista_suppressed = suppressed;
     }
+
+    /// Drop temporal history after a camera cut, world reload, or resume.
+    /// Does not allocate or reset the deterministic jitter sequence.
+    pub fn reset_history(&mut self) { self.history_valid = false; }
 
     /// Drain collected GPU cull-pass durations (empty unless the GPU
     /// path ran with timestamp queries available).
@@ -2573,7 +2618,7 @@ impl Renderer {
 
         let uniforms = Uniforms {
             view_proj: jittered_vp.to_cols_array_2d(),
-            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            inv_view_proj: jittered_vp.inverse().to_cols_array_2d(),
             light_view_proj: light_vp.to_cols_array_2d(),
             cam_pos: Vec4::from((pose.eye, 1.0)).to_array(),
             sun_dir: Vec4::from((world.sun_dir, 0.0)).to_array(),
@@ -2660,6 +2705,7 @@ impl Renderer {
                     targets.res_w as f32,
                     targets.res_h as f32,
                 ],
+                temporal: [self.prev_jitter.x, self.prev_jitter.y, 0.015, 0.05],
             };
             self.queue
                 .write_buffer(&self.resolve_uniform_buf, 0, bytemuck::cast_slice(&[ru]));
@@ -2735,20 +2781,20 @@ impl Renderer {
             }
             // M6: the operator casts too — one more depth draw with
             // his own caster pipeline (same depth bind group).
-            if let Some((vb, ib, count)) = &self.operator_bufs {
+            if let Some(mesh) = &self.operator_bufs {
                 pass.set_pipeline(&self.operator_depth_pipeline);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..*count, 0, 0..1);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.count, 0, 0..1);
                 shadow_draws += 1;
             }
             // Slice 1: the props cast too (buildings into the sun
             // map — the street's long shadows are the buildings').
-            if let Some((vb, ib, count)) = &self.props_bufs {
+            if let Some(mesh) = &self.props_bufs {
                 pass.set_pipeline(&self.props_depth_pipeline);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..*count, 0, 0..1);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.count, 0, 0..1);
                 shadow_draws += 1;
             }
             draw_calls += shadow_draws;
@@ -2809,24 +2855,24 @@ impl Renderer {
             // water (he is opaque; the sea blends over his shore
             // footing like it does over the sand).
             let mut operator_draws = 0u32;
-            if let Some((vb, ib, count)) = &self.operator_bufs {
+            if let Some(mesh) = &self.operator_bufs {
                 pass.set_pipeline(&self.operator_pipeline);
                 pass.set_bind_group(1, &self.operator_bind_group, &[]);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..*count, 0, 0..1);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.count, 0, 0..1);
                 operator_draws = 1;
             }
             // Slice 1: the props draw after the operator (both
             // opaque; the street is the ground the men stand on).
             let mut props_draws = 0u32;
-            if let Some((vb, ib, count)) = &self.props_bufs {
+            if let Some(mesh) = &self.props_bufs {
                 pass.set_pipeline(&self.props_pipeline);
                 pass.set_bind_group(1, &self.props_bind_group, &[]);
                 pass.set_bind_group(2, &self.props_lamp_bind_group, &[]);
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..*count, 0, 0..1);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.count, 0, 0..1);
                 props_draws = 1;
             }
             let mut water_draws = 0u32;
@@ -2900,6 +2946,18 @@ impl Renderer {
             );
         }
 
+        // Keep the previous raster's depth for next frame's occlusion
+        // test. This is a GPU copy, with no readback or extra draw pass.
+        if let Some(history_depth) = &targets.history_depth {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo { texture: &targets.depth_tex, mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::DepthOnly },
+                wgpu::TexelCopyTextureInfo { texture: history_depth, mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::DepthOnly },
+                wgpu::Extent3d { width: internal_w, height: internal_h, depth_or_array_layers: 1 },
+            );
+        }
+
         // ---- blit / FXAA to the output ----
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2942,6 +3000,7 @@ impl Renderer {
         }
 
         self.prev_view_proj = view_proj;
+        self.prev_jitter = jitter_uv;
         if self.aa_mode == AaMode::Taa {
             self.history_valid = true;
         }

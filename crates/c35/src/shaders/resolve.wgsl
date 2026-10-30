@@ -17,7 +17,8 @@ struct ResolveUniforms {
     inv_view_proj: mat4x4<f32>,  // current frame, unjittered
     prev_view_proj: mat4x4<f32>, // previous frame, unjittered
     params: vec4<f32>,           // xy: jitter in UV · z: history valid · w: blend alpha
-    vel: vec4<f32>,              // M7 velocity-aware rejection: x gain/px · y threshold px · zw resolve dims
+    vel: vec4<f32>,              // motion rejection: gain, threshold, resolve dimensions
+    temporal: vec4<f32>,         // previous jitter xy, relative / absolute depth tolerance
 }
 
 @group(0) @binding(0) var<uniform> ru: ResolveUniforms;
@@ -25,6 +26,11 @@ struct ResolveUniforms {
 @group(0) @binding(2) var depth_tex: texture_depth_2d;
 @group(0) @binding(3) var hist_tex: texture_2d<f32>;
 @group(0) @binding(4) var lin_samp: sampler;
+@group(0) @binding(5) var hist_depth_tex: texture_depth_2d;
+
+fn linear_depth(z: f32) -> f32 {
+    return 0.5 * 4000.0 / (4000.0 - z * (4000.0 - 0.5));
+}
 
 struct ROut {
     @builtin(position) clip: vec4<f32>,
@@ -49,16 +55,17 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
     // This pass's pixels are OUTPUT pixels; the current frame and its
     // depth live at the internal resolution. Map between the two by UV.
     let cur_dims = vec2<f32>(textureDimensions(cur_tex));
+    let sample_uv = in.uv + ru.params.xy;
     let cur_px = clamp(
-        vec2<i32>(in.uv * cur_dims),
+        vec2<i32>(sample_uv * cur_dims),
         vec2<i32>(0, 0),
         vec2<i32>(cur_dims) - vec2<i32>(1, 1),
     );
     let max_px = vec2<i32>(cur_dims) - vec2<i32>(1, 1);
 
     // Current colour, un-jittered: the rasterizer shifted the image by the
-    // jitter, so sample back by the same amount.
-    let cur = textureSampleLevel(cur_tex, lin_samp, in.uv - ru.params.xy, 0.0).rgb;
+    // jitter, so address that same shifted raster location.
+    let cur = textureSampleLevel(cur_tex, lin_samp, sample_uv, 0.0).rgb;
 
     // 3x3 neighbourhood of the raw current frame, for the clamp box.
     var cmin = vec3<f32>(1e9);
@@ -88,7 +95,18 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
     }
     let prev_ndc = prev_clip.xyz / prev_clip.w;
     let prev_uv = vec2<f32>(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
-    if (any(prev_uv < vec2<f32>(0.0)) || any(prev_uv > vec2<f32>(1.0)) || prev_ndc.z > 1.0) {
+    if (any(prev_uv < vec2<f32>(0.0)) || any(prev_uv > vec2<f32>(1.0)) || prev_ndc.z > 1.0 || prev_ndc.z < 0.0) {
+        return vec4<f32>(cur, 1.0);
+    }
+
+    // Reject history whose old visible surface was at another depth.
+    // Compare linear view depths, so tolerance has a world-space meaning
+    // at both the near plane and the far shore. The previous depth is
+    // raster-sized and must be addressed with its OWN raster jitter.
+    let hist_px = clamp(vec2<i32>((prev_uv + ru.temporal.xy) * cur_dims), vec2<i32>(0), max_px);
+    let old_depth = textureLoad(hist_depth_tex, hist_px, 0);
+    let expected = linear_depth(prev_ndc.z);
+    if (abs(linear_depth(old_depth) - expected) > max(ru.temporal.w, expected * ru.temporal.z)) {
         return vec4<f32>(cur, 1.0);
     }
 
@@ -110,3 +128,4 @@ fn fs_main(in: ROut) -> @location(0) vec4<f32> {
     let resolved = mix(hist, cur, alpha);
     return vec4<f32>(resolved, 1.0);
 }
+

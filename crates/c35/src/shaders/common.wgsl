@@ -6,7 +6,7 @@
 
 struct Uniforms {
     view_proj: mat4x4<f32>,       // jittered when TAA is live
-    inv_view_proj: mat4x4<f32>,   // unjittered inverse (sky rays)
+    inv_view_proj: mat4x4<f32>,   // inverse raster projection (sky rays share scene jitter)
     light_view_proj: mat4x4<f32>, // sun shadow space
     cam_pos: vec4<f32>,
     sun_dir: vec4<f32>,     // xyz: direction TO the sun
@@ -203,3 +203,4 @@ fn ps15_grade(col: vec3<f32>, px: vec2<f32>) -> vec3<f32> {
     let q = clamp(floor(g * steps + dith) / steps, vec3<f32>(0.0), vec3<f32>(1.0));
     return q * q;
 }
+
