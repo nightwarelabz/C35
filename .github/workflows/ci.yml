@@ -1,0 +1,118 @@
+# Draft until the fix PR that deletes hosts/debrief and regenerates
+# Cargo.lock lands. Every cargo step passes --locked. Rust 1.99 does not
+# error --locked on an unused `debrief` package (it skips the prune), so
+# the jobs also reject a lockfile that still names it. Rebase onto that
+# PR before marking ready. Do not edit Cargo.lock here.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: fmt, clippy, build, test, doc
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Rust 1.99 `cargo --locked test` does not error when Cargo.lock
+      # still names removed member `debrief` (it skips the prune). Fail
+      # that case here so this job stays red until the lockfile fix lands.
+      - name: Reject stale debrief lock entry
+        run: |
+          if grep -q 'name = "debrief"' Cargo.lock; then
+            echo "Cargo.lock still lists debrief, which is not a workspace member."
+            echo "Rebase onto the PR that deletes hosts/debrief and regenerates Cargo.lock."
+            exit 1
+          fi
+
+      - name: Format
+        run: cargo --locked fmt --all -- --check
+
+      - name: Clippy
+        run: cargo --locked clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo --locked build --workspace --all-targets --all-features
+
+      - name: Test
+        run: cargo --locked test --workspace --all-targets --all-features
+
+      - name: Test without default features
+        run: cargo --locked test --workspace --all-targets --no-default-features
+
+      - name: Doc
+        run: cargo --locked doc --workspace --no-deps --all-features
+
+      - name: Lockfile was not rewritten
+        run: git diff --exit-code -- Cargo.lock
+
+  gpu-smoke:
+    name: headless lavapipe
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Reject stale debrief lock entry
+        run: |
+          if grep -q 'name = "debrief"' Cargo.lock; then
+            echo "Cargo.lock still lists debrief, which is not a workspace member."
+            echo "Rebase onto the PR that deletes hosts/debrief and regenerates Cargo.lock."
+            exit 1
+          fi
+
+      - name: Install lavapipe
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+          icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -n 1)"
+          if [ -z "${icd}" ]; then
+            echo "no lavapipe ICD under /usr/share/vulkan/icd.d" >&2
+            find /usr/share/vulkan /usr/lib -iname '*lvp*' -o -iname '*lavapipe*' >&2 || true
+            exit 1
+          fi
+          echo "VK_ICD_FILENAMES=${icd}" >> "${GITHUB_ENV}"
+          echo "WGPU_BACKEND=vulkan" >> "${GITHUB_ENV}"
+          echo "lavapipe ICD ${icd}"
+
+      - name: Headless frame (ignored test, run explicitly)
+        run: cargo --locked test -p c35 --test gpu_smoke -- --ignored --nocapture --exact headless_frame_is_not_blank
+
+      - name: Lockfile was not rewritten
+        run: git diff --exit-code -- Cargo.lock
