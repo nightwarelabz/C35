@@ -45,6 +45,7 @@
 //! draw calls per pass, triangles, render scale, tracked memory, frame
 //! time, and GPU pass times where the backend exposes timestamp queries.
 
+pub mod controller;
 pub mod dialogue;
 pub mod ecs;
 pub mod governor;
