@@ -21,8 +21,8 @@
 //!   it does for shipped geometry; the mesh builder does not invent
 //!   light.
 
-use crate::props::{uv_rect, PropMesh, PropVertex};
 use crate::modding::model::{Part, Primitive};
+use crate::props::{uv_rect, PropMesh, PropVertex};
 
 /// Emit a prop's mesh from its resolved parts.
 pub fn build_mesh(parts: &[Part]) -> PropMesh {
@@ -42,41 +42,29 @@ fn local_polys(part: &Part) -> Vec<Poly> {
         Primitive::Box => vec![
             // +X, -X, +Y, -Y, +Z, -Z (each wound counter-clockwise
             // seen from outside).
-            vec![
-                [hx, -hy, -hz],
-                [hx, hy, -hz],
-                [hx, hy, hz],
-                [hx, -hy, hz],
-            ],
+            vec![[hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz], [hx, -hy, hz]],
             vec![
                 [-hx, -hy, hz],
                 [-hx, hy, hz],
                 [-hx, hy, -hz],
                 [-hx, -hy, -hz],
             ],
-            vec![
-                [-hx, hy, -hz],
-                [-hx, hy, hz],
-                [hx, hy, hz],
-                [hx, hy, -hz],
-            ],
+            vec![[-hx, hy, -hz], [-hx, hy, hz], [hx, hy, hz], [hx, hy, -hz]],
             vec![
                 [-hx, -hy, hz],
                 [-hx, -hy, -hz],
                 [hx, -hy, -hz],
                 [hx, -hy, hz],
             ],
-            vec![
-                [-hx, -hy, hz],
-                [-hx, hy, hz],
-                [hx, hy, hz],
-                [hx, -hy, hz],
-            ],
+            // +Z / −Z. Counter-clockwise when seen from outside
+            // (the +X/−X faces already were; these two were not,
+            // so their cross product pointed back into the box).
+            vec![[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]],
             vec![
                 [hx, -hy, -hz],
-                [hx, hy, -hz],
-                [-hx, hy, -hz],
                 [-hx, -hy, -hz],
+                [-hx, hy, -hz],
+                [hx, hy, -hz],
             ],
         ],
         Primitive::Wedge => {
@@ -88,17 +76,9 @@ fn local_polys(part: &Part) -> Vec<Poly> {
             let c = [-hx, hy];
             vec![
                 // Front triangle (z = +hz).
-                vec![
-                    [a[0], a[1], hz],
-                    [b[0], b[1], hz],
-                    [c[0], c[1], hz],
-                ],
+                vec![[a[0], a[1], hz], [b[0], b[1], hz], [c[0], c[1], hz]],
                 // Back triangle (z = -hz), reversed winding.
-                vec![
-                    [a[0], a[1], -hz],
-                    [c[0], c[1], -hz],
-                    [b[0], b[1], -hz],
-                ],
+                vec![[a[0], a[1], -hz], [c[0], c[1], -hz], [b[0], b[1], -hz]],
                 // Bottom (y = -hy).
                 vec![
                     [a[0], a[1], -hz],
@@ -135,20 +115,20 @@ fn local_polys(part: &Part) -> Vec<Poly> {
             let mut polys: Vec<Poly> = Vec::new();
             for i in 0..n {
                 let j = (i + 1) % n;
-                polys.push(vec![
-                    rim_bot[i],
-                    rim_bot[j],
-                    rim_top[j],
-                    rim_top[i],
-                ]);
+                // Outward: the previous order walked the rim in
+                // the direction whose cross product pointed at
+                // the axis. Bottom → top on i, then across to j.
+                polys.push(vec![rim_bot[i], rim_top[i], rim_top[j], rim_bot[j]]);
             }
-            // Caps as fans.
+            // Caps as fans. Increasing angle is clockwise seen
+            // from above, so the top fan walks backward and the
+            // bottom fan walks forward — both then point out.
             let mut top: Poly = vec![[0.0, hy, 0.0]];
-            for i in 0..n {
+            for i in (0..n).rev() {
                 top.push(rim_top[i]);
             }
             let mut bot: Poly = vec![[0.0, -hy, 0.0]];
-            for i in (0..n).rev() {
+            for i in 0..n {
                 bot.push(rim_bot[i]);
             }
             polys.push(top);
@@ -181,21 +161,9 @@ fn rot_matrix(deg: [f32; 3]) -> [[f32; 3]; 3] {
     let (sy, cy) = (ry.sin(), ry.cos());
     let (sz, cz) = (rz.sin(), rz.cos());
     // Rx, Ry, Rz, then R = Rz * Ry * Rx.
-    let rxm = [
-        [1.0, 0.0, 0.0],
-        [0.0, cx, -sx],
-        [0.0, sx, cx],
-    ];
-    let rym = [
-        [cy, 0.0, sy],
-        [0.0, 1.0, 0.0],
-        [-sy, 0.0, cy],
-    ];
-    let rzm = [
-        [cz, -sz, 0.0],
-        [sz, cz, 0.0],
-        [0.0, 0.0, 1.0],
-    ];
+    let rxm = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+    let rym = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    let rzm = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
     let mul = |a: [[f32; 3]; 3], b: [[f32; 3]; 3]| -> [[f32; 3]; 3] {
         let mut o = [[0.0; 3]; 3];
         for i in 0..3 {
@@ -338,16 +306,43 @@ mod tests {
         assert_eq!(m.indices.len(), 12);
     }
 
+    /// A face of an origin-centred convex part must point out:
+    /// position · normal is positive on every vertex. The box's
+    /// Z faces and every cylinder face used to fail this.
+    fn normals_point_outward(prim: Primitive) {
+        let m = build_mesh(&[mkpart(prim)]);
+        for v in &m.vertices {
+            let d = v.position[0] * v.normal[0]
+                + v.position[1] * v.normal[1]
+                + v.position[2] * v.normal[2];
+            assert!(
+                d > 1e-3,
+                "{prim:?} inward normal {:?} at {:?}",
+                v.normal,
+                v.position
+            );
+        }
+    }
+
+    #[test]
+    fn box_normals_point_outward() {
+        normals_point_outward(Primitive::Box);
+    }
+
+    #[test]
+    fn cylinder_normals_point_outward() {
+        normals_point_outward(Primitive::Cylinder);
+    }
+
     #[test]
     fn rotated_part_keeps_unit_normals() {
         let mut p = mkpart(Primitive::Box);
         p.rotation = [30.0, 45.0, 0.0];
         let m = build_mesh(&[p]);
         for v in &m.vertices {
-            let len = (v.normal[0] * v.normal[0]
-                + v.normal[1] * v.normal[1]
-                + v.normal[2] * v.normal[2])
-                .sqrt();
+            let len =
+                (v.normal[0] * v.normal[0] + v.normal[1] * v.normal[1] + v.normal[2] * v.normal[2])
+                    .sqrt();
             assert!((len - 1.0).abs() < 1e-4, "normal len {len}");
         }
     }
