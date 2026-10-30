@@ -66,3 +66,14 @@ fn nested_batches_do_not_starve_workers() {
     });
     assert_eq!(values, [7; 8]);
 }
+
+#[test]
+fn cost_statistics_ignore_bad_samples_and_bound_percentiles() {
+    let samples = [10.0, f64::NAN, 30.0, f64::INFINITY, 20.0];
+    assert_eq!(c35::mean(&samples), 20.0);
+    assert_eq!(c35::percentile(&samples, 50.0), 20.0);
+    assert_eq!(c35::percentile(&samples, -100.0), 10.0);
+    assert_eq!(c35::percentile(&samples, 1000.0), 30.0);
+    assert_eq!(c35::percentile(&[f64::NAN], 95.0), 0.0);
+    assert_eq!(c35::mean(&[]), 0.0);
+}

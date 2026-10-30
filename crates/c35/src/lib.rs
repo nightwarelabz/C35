@@ -399,6 +399,7 @@ struct GpuCull {
     pending: Arc<ReadbackGate>,
     snapshot: Arc<Mutex<Option<(usize, u64)>>>, // (tiles drawn, terrain tris)
     timer: Option<PassTimer>,
+    bytes: u64,
 }
 
 impl GpuCull {
@@ -559,6 +560,7 @@ pub struct Renderer {
     last_tris: u64,
     last_shadow_tris: u64,
     targets: Option<Targets>,
+    target_rebuilds: u64,
     shadow_timer: Option<PassTimer>,
     scene_timer: Option<PassTimer>,
     frame_count: u64,
@@ -1790,7 +1792,9 @@ impl Renderer {
             } else {
                 None
             };
+            let bytes = params_buf.size() + args_buf.size() + readback_buf.size() + uniform_buf.size();
             Some(GpuCull {
+                bytes,
                 pipeline,
                 bind_group,
                 uniform_buf,
@@ -1879,6 +1883,7 @@ impl Renderer {
             last_tris: full_tris + 4,
             last_shadow_tris: full_tris,
             targets: None,
+            target_rebuilds: 0,
             shadow_timer,
             scene_timer,
             frame_count: 0,
@@ -2083,6 +2088,7 @@ impl Renderer {
             self.resolved_view = Some(resolved_view);
         }
         self.history_valid = false;
+        self.target_rebuilds += 1;
         self.targets = Some(Targets {
             width,
             height,
@@ -2101,6 +2107,10 @@ impl Renderer {
             bytes,
         });
     }
+
+    /// Actual target-set allocations, including initialization. Repeated
+    /// equal-size resizes and uniform-only look changes do not increment it.
+    pub fn target_rebuild_count(&self) -> u64 { self.target_rebuilds }
 
     pub fn render_scale(&self) -> f32 {
         self.targets.as_ref().map(|t| t.scale).unwrap_or(1.0)
@@ -2133,7 +2143,7 @@ impl Renderer {
     }
 
     /// Scene-pass triangles submitted by the most recent frame (terrain
-    /// after culling + LOD, plus water, sky and the blit triangle).
+    /// after culling + LOD, plus water, sky, temporal resolve and the blit triangle).
     pub fn triangles_per_frame(&self) -> u64 {
         self.last_tris
     }
@@ -2313,7 +2323,7 @@ impl Renderer {
             &mut self.operator_bufs, &self.device, &self.queue,
             bytemuck::cast_slice(&mesh.vertices), &mesh.indices, &mut self.mesh_uploads,
         );
-        self.operator_tris = mesh.triangle_count();
+        self.operator_tris = if self.operator_bufs.is_some() { mesh.triangle_count() } else { 0 };
     }
 
     /// Cumulative bytes sent and allocations made by placed meshes.
@@ -2341,7 +2351,7 @@ impl Renderer {
                     &mut self.props_bufs, &self.device, &self.queue,
                     bytemuck::cast_slice(&m.vertices), &m.indices, &mut self.mesh_uploads,
                 );
-                self.props_tris = m.triangle_count();
+                self.props_tris = if self.props_bufs.is_some() { m.triangle_count() } else { 0 };
             }
         }
     }
@@ -2518,15 +2528,14 @@ impl Renderer {
     /// uniforms. An estimate by construction — the ledger labels it as such.
     pub fn tracked_vram_bytes(&self) -> u64 {
         let t = self.targets.as_ref().map(|t| t.bytes).unwrap_or(0);
-        self.geometry_bytes
-            + t
-            + self.shadow_bytes
-            + self.operator_bytes
-            + self.props_bytes
-            + (operator::ATLAS_SIZE as u64) * (operator::ATLAS_SIZE as u64) * 4
-            + (props::CITY_ATLAS_SIZE as u64) * (props::CITY_ATLAS_SIZE as u64) * 4
-            + std::mem::size_of::<Uniforms>() as u64
-            + std::mem::size_of::<ResolveUniforms>() as u64
+        let timer_bytes = |timer: &PassTimer| timer.resolve_buf.size() + timer.readback_buf.size();
+        let timers: u64 = self.shadow_timer.iter().chain(self.scene_timer.iter()).map(timer_bytes).sum();
+        let cull = self.gpu_cull.as_ref().map_or(0, |c| c.bytes + c.timer.as_ref().map_or(0, timer_bytes));
+        self.geometry_bytes + t + self.shadow_bytes + self.operator_bytes + self.props_bytes
+            + u64::from(operator::ATLAS_SIZE) * u64::from(operator::ATLAS_SIZE) * 4
+            + u64::from(props::CITY_ATLAS_SIZE) * u64::from(props::CITY_ATLAS_SIZE) * 4
+            + self.uniform_buf.size() + self.resolve_uniform_buf.size() + self.props_lamp_buf.size()
+            + timers + cull
     }
 
     pub fn gpu_timestamps_available(&self) -> bool {
@@ -3026,7 +3035,8 @@ impl Renderer {
         } else {
             self.cull_stats().tris_after + 2
         };
-        self.last_tris = vista_tris + 1 + 1 + self.operator_tris + self.props_tris;
+        self.last_tris = vista_tris + 1 + 1 + u64::from(self.aa_mode == AaMode::Taa)
+            + self.operator_tris + self.props_tris;
         let vista_shadow_tris = if self.vista_suppressed {
             0
         } else {

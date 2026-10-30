@@ -442,12 +442,15 @@ fn main() {
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
     }
     let _ = renderer.drain_gpu_samples();
+    let _ = renderer.drain_cull_samples();
 
     let frames = if drive.is_some() && !frames_given { 20000 } else { frames };
     let mut frame_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut update_ms: Vec<f64> = Vec::with_capacity(frames);
+    let mut simulation_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut printed_adj = 0usize;
     for i in 0..frames {
+        let start = Instant::now();
         let (t, pose) = if let Some(d) = drive.as_mut() {
             let dt = 1.0f32 / 60.0;
             let input = d.ctrl.update(dt);
@@ -491,7 +494,7 @@ fn main() {
             let t = if drift { i as f32 / 60.0 * drift_rate } else { 0.0 };
             (t, pose_at(t))
         };
-        let start = Instant::now();
+        simulation_ms.push(start.elapsed().as_secs_f64() * 1000.0);
         renderer.render(&out_view, &pose, &world, t);
         let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
         let ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -547,12 +550,17 @@ fn main() {
             renderer.operator_triangles()
         );
     }
-    println!("frames measured  : {frames} (after 10 warmup)");
+    println!("frames measured  : {} (after 10 warmup)", frame_ms.len());
     println!(
-        "frame time       : mean {:.2} ms, p95 {:.2} ms  [frame-loop wall time: encode+submit+wait]",
+        "frame time       : mean {:.2} ms, p95 {:.2} ms  [frame-loop wall time: simulate+skin+encode+submit+wait]",
         c35::mean(&frame_ms),
         c35::percentile(&frame_ms, 95.0)
     );
+    println!("simulation/skin  : mean {:.3} ms CPU", c35::mean(&simulation_ms));
+    let uploads = renderer.mesh_upload_stats();
+    println!("mesh uploads     : {} vertex bytes, {} index bytes, {} buffer allocations (cumulative)",
+        uploads.vertex_bytes, uploads.index_bytes, uploads.buffer_allocations);
+    println!("target rebuilds  : {} (includes initialization)", renderer.target_rebuild_count());
     if renderer.shadow_active() {
         if shadow_ms.is_empty() {
             println!("gpu shadow pass  : n/a (timestamp queries not exposed by this backend)");

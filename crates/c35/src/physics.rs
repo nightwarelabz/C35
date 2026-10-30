@@ -42,6 +42,9 @@ impl Rope {
         }
         let offset = body.position - self.anchor;
         let distance = offset.length();
+        if !distance.is_finite() {
+            return ConstraintReport::default();
+        }
         if distance < self.length || distance <= f32::EPSILON {
             return ConstraintReport::default();
         }
@@ -69,8 +72,13 @@ impl Particle {
         {
             return ConstraintReport::default();
         }
-        self.velocity += acceleration * dt;
-        self.position += self.velocity * dt;
+        let velocity = self.velocity + acceleration * dt;
+        let position = self.position + velocity * dt;
+        if !velocity.is_finite() || !position.is_finite() {
+            return ConstraintReport::default();
+        }
+        self.velocity = velocity;
+        self.position = position;
         rope.map_or_else(ConstraintReport::default, |rope| rope.constrain(self))
     }
 }

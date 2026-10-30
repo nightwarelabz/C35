@@ -72,7 +72,7 @@ impl FixedClock {
         self.tick = self.tick.saturating_add(steps);
         StepBatch {
             ticks: start..self.tick,
-            alpha: self.remainder as f32 / SECOND as f32,
+            alpha: ((self.remainder as f64 / SECOND as f64) as f32).min(1.0 - f32::EPSILON),
             dropped,
         }
     }
@@ -125,5 +125,13 @@ mod tests {
         clock.advance(Duration::from_millis(15));
         clock.reset_accumulator();
         assert_eq!(clock.advance(Duration::from_millis(5)).ticks, 1..1);
+    }
+
+    #[test]
+    fn interpolation_never_rounds_up_to_a_future_tick() {
+        let mut clock = FixedClock::new(1, 1);
+        let batch = clock.advance(Duration::from_nanos(999_999_999));
+        assert!(batch.alpha < 1.0 && batch.alpha >= 0.0);
+        assert_eq!(batch.ticks, 0..0);
     }
 }

@@ -142,8 +142,10 @@ fn render_paths_culling_parity_and_storage_reuse() {
     cpu.render(&view, &HERO_POSE, &world, 0.0);
     cpu.reset_history();
     let bytes = cpu.tracked_vram_bytes();
+    let rebuilds = cpu.target_rebuild_count();
     cpu.resize(128, 72);
     assert_eq!(cpu.tracked_vram_bytes(), bytes);
+    assert_eq!(cpu.target_rebuild_count(), rebuilds);
     cpu.set_present_mode(PresentMode::Ps15, 2.0);
     cpu.render(&view, &HERO_POSE, &world, 0.0);
     cpu.pin_governor(Some(4));
@@ -162,4 +164,23 @@ fn render_paths_culling_parity_and_storage_reuse() {
     println!(
         "Vulkan render validation passed; CPU/GPU frame byte parity; dynamic mesh allocations=2"
     );
+}
+
+#[test]
+#[ignore = "requires Mesa EGL/OpenGL; exercised by the gpu CI job"]
+fn fxaa_fallback_renders_without_temporal_resources() {
+    let instance = c35::create_instance_with(wgpu::Backends::GL);
+    let mut renderer =
+        c35::pollster::block_on(Renderer::try_new(&instance, SCENE_FORMAT, 128, 72, 1.0)).unwrap();
+    assert_eq!(renderer.aa_mode(), c35::AaMode::Fxaa);
+    assert_eq!(renderer.cull_mode(), CullMode::Cpu);
+    let output = target(&renderer, 128, 72);
+    let view = output.create_view(&Default::default());
+    renderer.set_present_mode(PresentMode::Ps15, 2.0);
+    let world = world_state(1_783_003_200.0, &Observer::new(41.88, -87.63));
+    renderer.render(&view, &HERO_POSE, &world, 0.0);
+    let image = pixels(&renderer, &output, 128, 72);
+    assert!(image.chunks_exact(4).any(|p| p[0] != p[1] || p[1] != p[2]));
+    assert!(image.chunks_exact(4).all(|p| p[3] == 255));
+    println!("OpenGL FXAA fallback validated without temporal depth or compute");
 }

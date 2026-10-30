@@ -44,5 +44,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update -qq && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - run: sudo apt-get update -qq && sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libegl1 libgl1-mesa-dri
       - run: cargo test -p c35 --test render --locked -- --ignored --nocapture

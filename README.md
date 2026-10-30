@@ -3,6 +3,14 @@
 
 # Comigen
 
+The [runtime upgrade](docs/ENGINE-UPGRADE.md) adds corrected temporal
+reconstruction with depth rejection, reusable GPU mesh storage and character
+skinning, panic-safe jobs, a fixed-step clock, static triangle queries,
+footstep events, bounded sound stimuli, and grapple-rope point dynamics.
+Native, wasm, Vulkan, and OpenGL checks run in [Engine CI](https://github.com/nightwarelabz/C35/actions/workflows/ci.yml).
+The upgrade report documents the APIs, measured CPU improvement, reproduction
+commands, and the boundaries of each new simulation system.
+
 **Comigen** is a game graphics engine built on one conviction: gorgeous
 visuals should be *cheap*. It is being built to make next-generation games
 whose visuals are engineered — procedurally generated, cost-accounted, and
@@ -524,3 +532,4 @@ standalone applications.
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE).
+

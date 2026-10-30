@@ -1,5 +1,11 @@
 # C35 — the three subsystem engines
 
+Current implementation update: [ENGINE-UPGRADE.md](ENGINE-UPGRADE.md) adds
+animation contact events, reusable figure skinning, shared static triangle
+queries, sound-stimulus simulation, and point-mass/rope dynamics. The board
+below is the original 2026-10-29 design snapshot; those narrow systems do not
+constitute audio playback, capsule collision, or a general physics engine.
+
 Owner direction, 2026-10-29 (Chase): "You will probably also need to build
 an animator engine coupled with C35 and a physics engine and a sound
 engine." Correct — assessed against what exists, scoped below. All three
@@ -167,3 +173,4 @@ groups; statuses are as of Slice 1 building.
 - **Networking** — DeBrief is designed as a solo immersive sim; no
   multiplayer is scoped. Not forgotten — excluded, and only the owner
   puts it back.
+

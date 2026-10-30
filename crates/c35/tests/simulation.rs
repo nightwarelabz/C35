@@ -201,3 +201,16 @@ fn pendulum_stays_finite_inside_rope_length() {
     }
     assert!(Rope::new(Vec3::ZERO, 0.0).is_none());
 }
+
+#[test]
+fn invalid_or_overflowing_physics_step_does_not_corrupt_body() {
+    let mut body = Particle {
+        position: Vec3::X,
+        velocity: Vec3::ZERO,
+    };
+    for dt in [f32::NAN, -1.0, f32::INFINITY, f32::MAX] {
+        body.step(Vec3::splat(f32::MAX), dt, None);
+        assert_eq!(body.position, Vec3::X);
+        assert_eq!(body.velocity, Vec3::ZERO);
+    }
+}
