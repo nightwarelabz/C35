@@ -192,6 +192,52 @@ impl Playback {
             .play(voices::churr_voice(seed, sr), VoiceKind::Churr, 0.35, 0.0, false);
     }
 
+    /// The visor powering on: the operator's own equipment,
+    /// heard at the ear — direct spawn, center pan, full
+    /// fidelity, no propagation, no occlusion. The host
+    /// calls this when the visor state turns on; it does
+    /// not come from the event log and is never priced.
+    pub fn render_visor_power_on(&mut self) {
+        let sr = self.mixer.sample_rate() as f32;
+        let seed = self.mixer.next_seed();
+        self.mixer.play(
+            voices::visor_power_on_voice(seed, sr),
+            VoiceKind::VisorPowerOn,
+            0.9,
+            0.0,
+            false,
+        );
+    }
+
+    /// The visor powering off: same direct at-the-ear path
+    /// as the power-on.
+    pub fn render_visor_power_off(&mut self) {
+        let sr = self.mixer.sample_rate() as f32;
+        let seed = self.mixer.next_seed();
+        self.mixer.play(
+            voices::visor_power_off_voice(seed, sr),
+            VoiceKind::VisorPowerOff,
+            0.8,
+            0.0,
+            false,
+        );
+    }
+
+    /// A visor tag blip: same direct path, quieter — a
+    /// punctuation mark at the ear while the street stays
+    /// loud around it.
+    pub fn render_visor_tag(&mut self) {
+        let sr = self.mixer.sample_rate() as f32;
+        let seed = self.mixer.next_seed();
+        self.mixer.play(
+            voices::visor_tag_voice(seed, sr),
+            VoiceKind::VisorTag,
+            0.5,
+            0.0,
+            false,
+        );
+    }
+
     /// Render `frames` stereo frames (interleaved L,R),
     /// advancing the music crossfade by the block's
     /// duration first so stems move with the mix.
