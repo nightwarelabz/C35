@@ -334,8 +334,10 @@ pub enum CullMode {
 /// `Ps15` is the PS1.5 register: the scene renders at a 480p-class
 /// internal frame (see [`PS15_MAX_W`]/[`PS15_MAX_H`]), the history
 /// resolve runs at that same presentation resolution (the mode is a
-/// *register*, not an upsampling trick), surfaces sample through the
-/// snapped texel grid, every scene fragment passes the palette grade
+/// *register*, not an upsampling trick), terrain detail samples the
+/// snapped texel grid, water normals stay analytic (a snapped wave
+/// domain tiled the sea into flat mirrors), every scene fragment
+/// passes the palette grade
 /// (shaders/common.wgsl), fog density takes the mode's look
 /// multiplier, and the final blit samples nearest — a crisp texel
 /// grid on the output. No vertex wobble, no affine warp: the chunk
