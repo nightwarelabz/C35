@@ -27,6 +27,19 @@ fn show(tag: &str, cur: &Current) {
     }
 }
 
+fn show_tracking(tag: &str, dlg: &Dialogue) {
+    println!("{} visited: {}", tag, dlg.visited().join(" -> "));
+    for (id, count) in dlg.visit_counts() {
+        println!("{} visit {} x{}", tag, id, count);
+    }
+    for (line_id, index) in dlg.choices_taken() {
+        println!("{} choice {} option {}", tag, line_id, index);
+    }
+    if dlg.choices_taken().is_empty() {
+        println!("{} choices: none", tag);
+    }
+}
+
 fn main() {
     let mut dlg = Dialogue::new();
 
@@ -106,6 +119,7 @@ fn main() {
     dlg.advance().unwrap();
     println!("is_finished: {}", dlg.is_finished());
     println!("current after finish: {:?}", dlg.current().map(|c| c.id));
+    show_tracking("tracking 1:", &dlg);
 
     // Refusal: advancing a finished conversation.
     match dlg.advance() {
@@ -131,6 +145,7 @@ fn main() {
     show("advance:", &dlg.current().unwrap());
     dlg.advance().unwrap();
     println!("is_finished: {}", dlg.is_finished());
+    show_tracking("tracking 2:", &dlg);
     println!(
         "facts at end: clearance = {:?}, trusted = {:?}",
         dlg.fact("clearance"),
