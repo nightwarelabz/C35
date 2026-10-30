@@ -79,6 +79,9 @@ pub struct Governor {
     level: usize,
     pin: Option<usize>,
     ema_ms: f64,
+    /// False until the first sample. A zero first frame must not
+    /// keep the `ema == 0` branch alive and replace the average.
+    ema_ready: bool,
     frames: u64,
     /// Frames since the last level change (cooldown clock).
     since_change: u64,
@@ -103,6 +106,7 @@ impl Governor {
             level: 0,
             pin: None,
             ema_ms: 0.0,
+            ema_ready: false,
             frames: 0,
             since_change: 0,
             headroom_evals: 0,
@@ -187,8 +191,9 @@ impl Governor {
     pub fn observe(&mut self, ms: f64) -> bool {
         self.frames += 1;
         self.since_change += 1;
-        if self.frames == 1 || self.ema_ms == 0.0 {
+        if !self.ema_ready {
             self.ema_ms = ms;
+            self.ema_ready = true;
         } else {
             self.ema_ms = self.ema_ms * 0.92 + ms * 0.08;
         }
@@ -236,5 +241,57 @@ impl Governor {
         self.state = quality_at(to);
         self.since_change = 0;
         self.headroom_evals = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ladder_ends() {
+        let top = quality_at(0);
+        assert_eq!(top.render_scale, 1.0);
+        assert_eq!(top.shadow_size, 4096);
+        assert_eq!(top.water_octaves, 4);
+        let floor = quality_at(MAX_LEVEL);
+        assert_eq!(floor.render_scale, 0.55);
+        assert_eq!(floor.shadow_size, 0);
+        assert_eq!(floor.water_octaves, 2);
+        assert_eq!(quality_at(100).shadow_size, 0);
+    }
+
+    #[test]
+    fn zero_first_sample_does_not_freeze_the_average() {
+        let mut g = Governor::new(16.7);
+        assert!(!g.observe(0.0));
+        g.observe(100.0);
+        assert!((g.ema_ms() - 8.0).abs() < 1e-9, "ema {}", g.ema_ms());
+    }
+
+    #[test]
+    fn pin_never_acts() {
+        let mut g = Governor::new(16.7);
+        g.pin_to(2);
+        for _ in 0..120 {
+            assert!(!g.observe(200.0));
+        }
+        assert_eq!(g.level(), 2);
+        assert!(g.pinned_overruns() > 0);
+        assert_eq!(g.adjustments().len(), 1);
+    }
+
+    #[test]
+    fn step_down_waits_for_the_cooldown() {
+        let mut g = Governor::new(16.7);
+        for _ in 0..30 {
+            assert!(!g.observe(100.0));
+        }
+        assert_eq!(g.level(), 0);
+        for _ in 0..30 {
+            let _ = g.observe(100.0);
+        }
+        assert_eq!(g.level(), 1);
+        assert_eq!(g.state().render_scale, 0.85);
     }
 }

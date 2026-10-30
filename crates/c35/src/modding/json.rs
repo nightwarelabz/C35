@@ -491,4 +491,34 @@ mod tests {
         let v = parse("{\n  \"a\": 1,\n  \"b\": 2\n}").unwrap();
         assert_eq!(v.field("b").unwrap().line, 3);
     }
+
+    #[test]
+    fn utf8_and_surrogate_pairs() {
+        let v = parse("\"café\"").unwrap();
+        assert_eq!(v.as_str(), Some("café"));
+        let v = parse(r#""\uD83D\uDE00""#).unwrap();
+        assert_eq!(v.as_str(), Some("😀"));
+        assert!(parse(r#""\uD800""#).is_err());
+        assert!(parse(r#""\uDC00""#).is_err());
+    }
+
+    #[test]
+    fn leading_zero_and_exponents() {
+        assert!(parse("01").is_err());
+        assert!(parse("1.").is_err());
+        assert_eq!(parse("0.5").unwrap().as_num(), Some(0.5));
+        assert_eq!(parse("1e2").unwrap().as_num(), Some(100.0));
+        assert_eq!(parse("-0").unwrap().as_num(), Some(-0.0));
+    }
+
+    #[test]
+    fn nesting_boundary() {
+        let ok = "[".repeat(MAX_DEPTH) + &"]".repeat(MAX_DEPTH);
+        assert!(
+            parse(&ok).is_ok(),
+            "depth {MAX_DEPTH} is the limit, not past it"
+        );
+        let too = "[".repeat(MAX_DEPTH + 1);
+        assert!(parse(&too).is_err());
+    }
 }
