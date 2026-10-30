@@ -10,7 +10,7 @@ At 0, before the bed has ever started, no slot is taken. After a
 storm, 0 silences the same slot; one-shots cannot steal it.
 
 The bed does not know about the weather module. Hosts pass the
-rate. When weather is linked, that rate is `Atmosphere::rain`.
+rate. When weather is linked, that rate is `WeatherState::rain()`.
 
 ```sh
 cargo test -p c35 rain
