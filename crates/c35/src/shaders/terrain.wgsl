@@ -53,9 +53,18 @@ fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f3
     let micro_raw = mix(vnoise(wp.zy * 0.85), vnoise(wp.xz * 0.85), clamp(up, 0.0, 1.0));
     let micro = mix(0.5, micro_raw, clamp(fade * 1.6, 0.0, 1.0));
 
-    var grass = mix(vec3<f32>(0.115, 0.205, 0.058), vec3<f32>(0.315, 0.385, 0.115), detail);
+    // Push 3: the grass's dark end deepens (0.115,0.205,0.058 ->
+    // 0.095,0.180,0.050) — the day still's meadows read as one felt
+    // tone because the mix's endpoints sat too close in value.
+    var grass = mix(vec3<f32>(0.095, 0.180, 0.050), vec3<f32>(0.315, 0.385, 0.115), detail);
     // Spring: the green comes back bright and yellow-leaning.
     grass = mix(grass, grass * vec3<f32>(1.10, 1.28, 0.82) + vec3<f32>(0.015, 0.045, 0.0), spring_w * 0.65);
+    // Push 3 — meadow patchwork: a coarse value octave (~22-unit
+    // cells) laid over the grass, so the ground carries large
+    // light/dark patches to the horizon — worked ground, not a
+    // baize sheet. It rides the grass only: rock, sand and snow
+    // take over by their own masks below, untouched.
+    grass *= 0.84 + 0.32 * vnoise(wp.xz * 0.045 + 4.7);
     let dry = vec3<f32>(0.45, 0.38, 0.19);
     let sand = vec3<f32>(0.78, 0.63, 0.42);
     // Rock. M3 — the headwall fix: the M2 band read as a flat curtain
@@ -72,13 +81,17 @@ fn terrain_albedo(wp: vec3<f32>, n: vec3<f32>, grain: f32, fade: f32) -> vec3<f3
         + vnoise(wp.xz * 0.055 + 9.1) * 0.38;
     let strata_jitter = (grain - 0.5) * 1.9 + (mottle - 0.5) * 2.6;
     let bed = sin(wp.y * 0.5 + micro * 2.2 + strata_jitter) * 0.5 + 0.5;
-    let strata = 0.84 + bed * 0.32 * (1.0 - up) * (0.45 + 0.55 * fade);
+    // Push 3: strata amplitude up (0.32 -> 0.44) and the distance
+    // gate lifted (0.45 + 0.55 fade -> 0.60 + 0.40 fade) — the beds
+    // are the headwall's craft at range, and the old gate had
+    // already halved them at proof-pose distance.
+    let strata = 0.82 + bed * 0.44 * (1.0 - up) * (0.60 + 0.40 * fade);
     var rock = mix(vec3<f32>(0.235, 0.225, 0.225), vec3<f32>(0.40, 0.345, 0.29), micro * (0.35 + 0.65 * up));
-    rock *= 0.76 + 0.48 * mottle; // wall-scale weathering
+    rock *= 0.66 + 0.68 * mottle; // wall-scale weathering (push 3: contrast up, was 0.76 + 0.48)
     // Cool lows: the mottled hollows lean blue-grey, not brown.
     rock = mix(rock, rock * vec3<f32>(0.88, 0.96, 1.14), (1.0 - mottle) * 0.55 * (1.0 - up));
     rock *= strata;
-    rock *= 0.86 + 0.28 * grain; // granular breakup in the rock band
+    rock *= 0.84 + 0.32 * grain; // granular breakup in the rock band (push 3: was 0.86 + 0.28)
     let snow = vec3<f32>(0.92, 0.94, 0.97);
 
     // Grass -> dry meadow as the ground rises and dries out.
@@ -146,6 +159,11 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
 
     // Normal perturbation from the grain gradient: near slopes stop
     // reading as smooth plastic. Fades with distance (no shimmer).
+    // Push 3: steep faces take the grain too — the mask used to
+    // spare exactly the walls, whose smoothness in the light was
+    // half the headwall's curtain read. The face weight (0.13)
+    // runs a touch under the gentle weight (0.16): walls facet,
+    // they do not crumble.
     var n = normalize(in.normal);
     if (fade > 0.01) {
         let e = 0.45;
@@ -153,7 +171,9 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4<f32> {
         let gx = vnoise2((wpg.xz + vec2<f32>(e, 0.0)) * 0.55);
         let gz = vnoise2((wpg.xz + vec2<f32>(0.0, e)) * 0.55);
         let grad = vec2<f32>(gx - g0, gz - g0) / e;
-        let strength = 0.16 * fade * smoothstep(0.25, 0.75, n.y);
+        let gentle = smoothstep(0.25, 0.75, n.y);
+        let face = 1.0 - smoothstep(0.45, 0.75, n.y);
+        let strength = fade * (0.16 * gentle + 0.13 * face);
         n = normalize(n + vec3<f32>(-grad.x, 0.0, -grad.y) * strength);
     }
 

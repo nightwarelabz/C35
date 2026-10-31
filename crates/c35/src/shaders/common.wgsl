@@ -25,7 +25,6 @@ struct Uniforms {
     misc: vec4<f32>,        // x: time s · y: shadow strength · z: render scale · w: aspect
     quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed)
     present: vec4<f32>,     // M6: x: PS1.5 mode (0 classic / 1 PS1.5) · y: PS1.5 fog density multiplier · z: palette steps · w: unused
-    surface: vec4<f32>,     // x: surface wetness (0 dry · 1 full wet, the weather layer's number) · yzw: unused
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -48,8 +47,12 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     let low = 1.0 - smoothstep(0.08, 0.42, sd.y);
     let horizon_col = u.sky_horizon.rgb
         * mix(vec3<f32>(0.90, 0.96, 1.06), vec3<f32>(1.07, 0.96, 0.84), az * low);
-    var col = mix(horizon_col, u.sky_mid.rgb, smoothstep(0.0, 0.24, t));
-    col = mix(col, u.sky_zenith.rgb, smoothstep(0.16, 0.7, t));
+    // Push 3: the gradient stages a little sooner — the night sky
+    // read as one flat navy slab from horizon to crown because the
+    // mid and zenith blends finished so high. Same keyframes, same
+    // colours; the depth arrives earlier in the climb.
+    var col = mix(horizon_col, u.sky_mid.rgb, smoothstep(0.0, 0.19, t));
+    col = mix(col, u.sky_zenith.rgb, smoothstep(0.12, 0.55, t));
     // Below the horizon: dark sea haze.
     col = mix(vec3<f32>(0.030, 0.035, 0.045), col, smoothstep(-0.10, 0.004, t));
     let sun_amt = max(dot(dir, sd), 0.0);
@@ -69,13 +72,16 @@ fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     // it exists only in the dark (water_p.w is daylight) and the fog
     // the fog pass lays over it is the same fog as everything else.
     if (u.present.x > 0.5) {
-        // Push 2: the lump contrast calms (0.62 + 0.38 n, was
-        // 0.45 + 0.55 n) — mirrored in the sea, the old contrast
-        // resolved as discrete tan blotches instead of a shore.
-        let lamps = 0.62 + 0.38 * vnoise(vec2<f32>(dir.x * 9.0 + dir.z * 7.0, 3.0));
-        let band = (1.0 - smoothstep(0.0, 0.09, abs(dir.y - 0.015)))
+        // Push 3: calmed again, hard. At grazing angles the push-2
+        // band flooded the whole horizon as a false ember sunset —
+        // at deep night the frame's loudest note — and mirrored in
+        // the sea it printed as discrete tan rings. The shore is
+        // now a whisper: narrower, dimmer, smoother. A rumour of
+        // lit coast, never a second sunset.
+        let lamps = 0.74 + 0.26 * vnoise(vec2<f32>(dir.x * 9.0 + dir.z * 7.0, 3.0));
+        let band = (1.0 - smoothstep(0.0, 0.05, abs(dir.y - 0.012)))
             * (1.0 - u.water_p.w) * lamps;
-        col += vec3<f32>(1.0, 0.50, 0.15) * band * 0.12;
+        col += vec3<f32>(1.0, 0.50, 0.15) * band * 0.055;
     }
     return col;
 }

@@ -423,11 +423,17 @@ pub fn generate_city_atlas() -> Vec<u8> {
     a.vshade(region::BRICK_DARK, 1.02, 0.74);
     paint_stone(&mut a, region::STONE, 0xC17E_0003);
     // ---- ground ----
+    // Graphics push 3: the sidewalk lifts and calms — base
+    // (63,62,59) -> (74,72,68), blotch count 130 -> 90 with the
+    // palette pulled closer in value. In the atlas the old paint
+    // read as dark camouflage mottling, barely separated from
+    // the asphalt beside it; the reference's sidewalk is a paler
+    // stone that stands off the street in value, joints first.
     a.cloth(
         region::CONCRETE,
-        [63, 62, 59],
+        [74, 72, 68],
         3,
-        Some((&[[54, 53, 51], [74, 72, 68], [48, 48, 47]], 130, 7)),
+        Some((&[[66, 65, 62], [84, 82, 78], [60, 60, 58]], 90, 7)),
         0xC17E_0004,
     );
     {
