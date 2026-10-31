@@ -51,6 +51,7 @@ pub mod ecs;
 pub mod governor;
 pub mod locomotion;
 pub mod modding;
+pub mod modeler;
 pub mod noise;
 pub mod op;
 pub mod operator;
