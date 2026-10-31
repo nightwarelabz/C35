@@ -87,9 +87,26 @@ pipeline — add-on, scripted test model, export, engine-side
 `format::load`, engine still render — can be built and proven in
 this VM without a display, before Chase ever opens it on the Mac.
 
+## Amendment (2026-10-30 22:33 CDT, Chase) — the bridge is its own repo: HOTWIRE
+
+Chase's refinement supersedes the mechanics above: the bridge is
+built as **our own tech in its own repo** —
+[nightwarelabz/hotwire](https://github.com/nightwarelabz/hotwire) —
+so nothing in the link is borrowed or license-entangled. Consequences:
+
+- **Zero bpy in v1.** Blender's only act is its own built-in glTF
+  export (.glb) into a drop folder. Hotwire (Rust, ours) converts
+  glTF → `.c35m` with the era enforcement of Option A, and the host
+  hot-reloads per Option B. The Option-A "exporter add-on" becomes a
+  later, optional one-click convenience living in hotwire's repo.
+- The contract lives in hotwire's `SPEC.md` (founding commit
+  `68ad3a67`): conversion rules, budgets, manifest, host contract.
+- Option C (world editing) stands as hotwire's v2.
+
 ## Recommendation
 
-**A → B as one spike, C as the follow-on.**
+**A → B as one spike, C as the follow-on.** (Now executing as
+Hotwire v1.)
 
 Spike contents: (1) the exporter add-on; (2) host hot-reload of a
 watched models folder; (3) one proof asset authored in Blender,
