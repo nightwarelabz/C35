@@ -397,7 +397,13 @@ fn paint_street_regions(a: &mut Atlas) {
         [104, 86, 57],
         6,
         Some((
-            &[[86, 68, 42], [120, 100, 66], [94, 76, 48], [132, 110, 74], [76, 60, 38]],
+            &[
+                [86, 68, 42],
+                [120, 100, 66],
+                [94, 76, 48],
+                [132, 110, 74],
+                [76, 60, 38],
+            ],
             520,
             7,
         )),
@@ -531,8 +537,8 @@ fn paint_street_regions(a: &mut Atlas) {
 /// edges, where they read as seams, rims, and shadow lines.
 fn paint_border_guards(a: &mut Atlas) {
     let dark: [u8; 3] = [38, 39, 40]; // the old camo's value
-    // WAXED's bottom and right edges met HELMET / VEST / ARMBAND
-    // when they were dark camo; keep the meeting dark.
+                                      // WAXED's bottom and right edges met HELMET / VEST / ARMBAND
+                                      // when they were dark camo; keep the meeting dark.
     let r = region::WAXED;
     a.rect((r.0, r.1 + r.3 - 3, r.2, 3), dark);
     a.rect((r.0 + r.2 - 3, r.1, 3, r.3), dark);
@@ -803,176 +809,790 @@ fn parts() -> Vec<Part> {
     let std = MAT_STANDARD;
     let mut v: Vec<Part> = Vec::new();
     // ---- pelvis: trousers, the webbing belt, the pouch row ----
-    v.push(part("pelvis", Pelvis, (0.0, 0.955, 0.0), (0.355, 0.21, 0.235), TROUSER, std));
-    v.push(part("belt", Pelvis, (0.0, 1.062, 0.0), (0.39, 0.072, 0.27), WEBBING, std));
-    v.push(part("belt buckle", Pelvis, (0.0, 1.062, 0.138), (0.075, 0.05, 0.022), METAL_LIGHT, std));
+    v.push(part(
+        "pelvis",
+        Pelvis,
+        (0.0, 0.955, 0.0),
+        (0.355, 0.21, 0.235),
+        TROUSER,
+        std,
+    ));
+    v.push(part(
+        "belt",
+        Pelvis,
+        (0.0, 1.062, 0.0),
+        (0.39, 0.072, 0.27),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "belt buckle",
+        Pelvis,
+        (0.0, 1.062, 0.138),
+        (0.075, 0.05, 0.022),
+        METAL_LIGHT,
+        std,
+    ));
     // THE REAR POUCH ROW (#32): three pouches across the back of
     // the belt, each with its flap and its brass clasp. This row is
     // the rear view's signature furniture — it gets its own parts,
     // not a texture's promise.
     for (tag, x) in [("L", 0.128f32), ("C", 0.0), ("R", -0.128)] {
-        v.push(part(match tag { "L" => "rear pouch L", "C" => "rear pouch C", _ => "rear pouch R" },
-            Pelvis, (x, 1.028, -0.163), (0.112, 0.148, 0.058), POUCH, std));
-        v.push(part(match tag { "L" => "rear pouch flap L", "C" => "rear pouch flap C", _ => "rear pouch flap R" },
-            Pelvis, (x, 1.072, -0.196), (0.104, 0.068, 0.024), WEBBING, std));
-        v.push(part(match tag { "L" => "rear pouch clasp L", "C" => "rear pouch clasp C", _ => "rear pouch clasp R" },
-            Pelvis, (x, 1.048, -0.203), (0.02, 0.032, 0.016), METAL_LIGHT, std));
+        v.push(part(
+            match tag {
+                "L" => "rear pouch L",
+                "C" => "rear pouch C",
+                _ => "rear pouch R",
+            },
+            Pelvis,
+            (x, 1.028, -0.163),
+            (0.112, 0.148, 0.058),
+            POUCH,
+            std,
+        ));
+        v.push(part(
+            match tag {
+                "L" => "rear pouch flap L",
+                "C" => "rear pouch flap C",
+                _ => "rear pouch flap R",
+            },
+            Pelvis,
+            (x, 1.072, -0.196),
+            (0.104, 0.068, 0.024),
+            WEBBING,
+            std,
+        ));
+        v.push(part(
+            match tag {
+                "L" => "rear pouch clasp L",
+                "C" => "rear pouch clasp C",
+                _ => "rear pouch clasp R",
+            },
+            Pelvis,
+            (x, 1.048, -0.203),
+            (0.02, 0.032, 0.016),
+            METAL_LIGHT,
+            std,
+        ));
     }
     // One pouch at the front-left hip (#31); the rest of the front
     // belt stays plain, the way his does.
-    v.push(part("front pouch", Pelvis, (0.145, 1.022, 0.148), (0.105, 0.135, 0.05), POUCH, std));
-    v.push(part("front pouch flap", Pelvis, (0.145, 1.062, 0.176), (0.097, 0.06, 0.024), WEBBING, std));
-    v.push(part("front pouch clasp", Pelvis, (0.145, 1.04, 0.183), (0.018, 0.03, 0.016), METAL_LIGHT, std));
+    v.push(part(
+        "front pouch",
+        Pelvis,
+        (0.145, 1.022, 0.148),
+        (0.105, 0.135, 0.05),
+        POUCH,
+        std,
+    ));
+    v.push(part(
+        "front pouch flap",
+        Pelvis,
+        (0.145, 1.062, 0.176),
+        (0.097, 0.06, 0.024),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "front pouch clasp",
+        Pelvis,
+        (0.145, 1.04, 0.183),
+        (0.018, 0.03, 0.016),
+        METAL_LIGHT,
+        std,
+    ));
     // ---- the coat's skirt: band, rear and side panels on the
     // pelvis; the front quarters ride the thighs, the way a coat's
     // front drapes over each leg (and the only way a rigid skirt
     // survives the crouch without tearing through the thigh).
-    v.push(part("coat skirt band", Pelvis, (0.0, 0.93, 0.0), (0.46, 0.13, 0.30), WAXED, std));
-    v.push(part("coat skirt rear", Pelvis, (0.0, 0.755, -0.1225), (0.42, 0.30, 0.065), WAXED, std));
-    v.push(part("coat vent shadow", Pelvis, (0.0, 0.68, -0.1465), (0.05, 0.17, 0.014), PLASTIC, std));
-    v.push(part("coat skirt side L", Pelvis, (0.2025, 0.755, 0.0), (0.065, 0.30, 0.245), WAXED, std));
-    v.push(part("coat skirt side R", Pelvis, (-0.2025, 0.755, 0.0), (0.065, 0.30, 0.245), WAXED, std));
+    v.push(part(
+        "coat skirt band",
+        Pelvis,
+        (0.0, 0.93, 0.0),
+        (0.46, 0.13, 0.30),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat skirt rear",
+        Pelvis,
+        (0.0, 0.755, -0.1225),
+        (0.42, 0.30, 0.065),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat vent shadow",
+        Pelvis,
+        (0.0, 0.68, -0.1465),
+        (0.05, 0.17, 0.014),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "coat skirt side L",
+        Pelvis,
+        (0.2025, 0.755, 0.0),
+        (0.065, 0.30, 0.245),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat skirt side R",
+        Pelvis,
+        (-0.2025, 0.755, 0.0),
+        (0.065, 0.30, 0.245),
+        WAXED,
+        std,
+    ));
     // Graphics push: a hem band wrapping the skirt's bottom edge,
     // 5 mm proud of every panel — the coat's weight line, so the
     // skirt ends in a mass instead of a cut edge.
-    v.push(part("coat hem band", Pelvis, (0.0, 0.615, 0.0), (0.48, 0.05, 0.32), WAXED, std));
-    v.push(part("coat front quarter L", ThighL, (0.112, 0.815, 0.122), (0.205, 0.31, 0.06), WAXED, std));
-    v.push(part("coat front quarter R", ThighR, (-0.112, 0.815, 0.122), (0.205, 0.31, 0.06), WAXED, std));
+    v.push(part(
+        "coat hem band",
+        Pelvis,
+        (0.0, 0.615, 0.0),
+        (0.48, 0.05, 0.32),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat front quarter L",
+        ThighL,
+        (0.112, 0.815, 0.122),
+        (0.205, 0.31, 0.06),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat front quarter R",
+        ThighR,
+        (-0.112, 0.815, 0.122),
+        (0.205, 0.31, 0.06),
+        WAXED,
+        std,
+    ));
     // ---- torso: the coat itself ----
-    v.push(part("coat torso", Torso, (0.0, 1.295, 0.0), (0.50, 0.45, 0.32), WAXED, std));
-    v.push(part("coat yoke", Torso, (0.0, 1.435, -0.1535), (0.40, 0.105, 0.013), WAXED, std));
+    v.push(part(
+        "coat torso",
+        Torso,
+        (0.0, 1.295, 0.0),
+        (0.50, 0.45, 0.32),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "coat yoke",
+        Torso,
+        (0.0, 1.435, -0.1535),
+        (0.40, 0.105, 0.013),
+        WAXED,
+        std,
+    ));
     // The shirt opening, kept narrow: a dark column between the
     // coat's fronts — at panel width it read as a bib, not a shirt.
-    v.push(part("shirt chest", Torso, (0.0, 1.35, 0.152), (0.09, 0.27, 0.014), TROUSER, std));
-    v.push(part("chest pocket L", Torso, (0.125, 1.375, 0.156), (0.125, 0.105, 0.014), WAXED, std));
-    v.push(part("chest pocket R", Torso, (-0.125, 1.375, 0.156), (0.125, 0.105, 0.014), WAXED, std));
-    v.push(part("chest pocket flap L", Torso, (0.125, 1.415, 0.158), (0.125, 0.045, 0.024), WAXED, std));
-    v.push(part("chest pocket flap R", Torso, (-0.125, 1.415, 0.158), (0.125, 0.045, 0.024), WAXED, std));
+    v.push(part(
+        "shirt chest",
+        Torso,
+        (0.0, 1.35, 0.152),
+        (0.09, 0.27, 0.014),
+        TROUSER,
+        std,
+    ));
+    v.push(part(
+        "chest pocket L",
+        Torso,
+        (0.125, 1.375, 0.156),
+        (0.125, 0.105, 0.014),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "chest pocket R",
+        Torso,
+        (-0.125, 1.375, 0.156),
+        (0.125, 0.105, 0.014),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "chest pocket flap L",
+        Torso,
+        (0.125, 1.415, 0.158),
+        (0.125, 0.045, 0.024),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "chest pocket flap R",
+        Torso,
+        (-0.125, 1.415, 0.158),
+        (0.125, 0.045, 0.024),
+        WAXED,
+        std,
+    ));
     // Coat buttons down his right front panel, beside the shirt V.
     for (i, y) in [1.42f32, 1.31, 1.20].iter().enumerate() {
-        v.push(part(match i { 0 => "coat button 1", 1 => "coat button 2", _ => "coat button 3" },
-            Torso, (-0.095, *y, 0.153), (0.028, 0.028, 0.020), PLASTIC, std));
+        v.push(part(
+            match i {
+                0 => "coat button 1",
+                1 => "coat button 2",
+                _ => "coat button 3",
+            },
+            Torso,
+            (-0.095, *y, 0.153),
+            (0.028, 0.028, 0.020),
+            PLASTIC,
+            std,
+        ));
     }
     // Graphics push: the storm flap over the button placket — a
     // waxed coat's covered front. It sits on the button side
     // only, so the shirt V stays open beside it.
-    v.push(part("coat storm flap", Torso, (-0.095, 1.31, 0.168), (0.08, 0.40, 0.024), WAXED, std));
-    v.push(part("collar", Torso, (0.0, 1.525, -0.015), (0.27, 0.09, 0.25), WAXED, std));
-    v.push(part("shoulder L", Torso, (0.29, 1.478, 0.0), (0.20, 0.095, 0.28), WAXED, std));
-    v.push(part("shoulder R", Torso, (-0.29, 1.478, 0.0), (0.20, 0.095, 0.28), WAXED, std));
+    v.push(part(
+        "coat storm flap",
+        Torso,
+        (-0.095, 1.31, 0.168),
+        (0.08, 0.40, 0.024),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "collar",
+        Torso,
+        (0.0, 1.525, -0.015),
+        (0.27, 0.09, 0.25),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "shoulder L",
+        Torso,
+        (0.29, 1.478, 0.0),
+        (0.20, 0.095, 0.28),
+        WAXED,
+        std,
+    ));
+    v.push(part(
+        "shoulder R",
+        Torso,
+        (-0.29, 1.478, 0.0),
+        (0.20, 0.095, 0.28),
+        WAXED,
+        std,
+    ));
     // The radio's shoulder strap: front, over the shoulder, and
     // down the back on his left, brass-buckled at the chest (#31).
-    v.push(part("shoulder strap front", Torso, (0.155, 1.315, 0.160), (0.068, 0.42, 0.030), WEBBING, std));
-    v.push(part("shoulder strap top", Torso, (0.155, 1.532, 0.0), (0.068, 0.030, 0.33), WEBBING, std));
-    v.push(part("shoulder strap back", Torso, (0.155, 1.315, -0.160), (0.068, 0.42, 0.030), WEBBING, std));
-    v.push(part("shoulder strap buckle", Torso, (0.155, 1.44, 0.170), (0.052, 0.062, 0.020), METAL_LIGHT, std));
+    v.push(part(
+        "shoulder strap front",
+        Torso,
+        (0.155, 1.315, 0.160),
+        (0.068, 0.42, 0.030),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "shoulder strap top",
+        Torso,
+        (0.155, 1.532, 0.0),
+        (0.068, 0.030, 0.33),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "shoulder strap back",
+        Torso,
+        (0.155, 1.315, -0.160),
+        (0.068, 0.42, 0.030),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "shoulder strap buckle",
+        Torso,
+        (0.155, 1.44, 0.170),
+        (0.052, 0.062, 0.020),
+        METAL_LIGHT,
+        std,
+    ));
     // The pack strap down the back, medial of the radio (#32): two
     // brass buckles, and the ONE RE-SEWN PATCH — a paler canvas
     // repair riding the strap where every rear view will find it.
-    v.push(part("pack strap back", Torso, (0.005, 1.29, -0.160), (0.075, 0.50, 0.030), WEBBING, std));
-    v.push(part("pack strap buckle 1", Torso, (0.005, 1.42, -0.170), (0.055, 0.06, 0.020), METAL_LIGHT, std));
-    v.push(part("pack strap buckle 2", Torso, (0.005, 1.20, -0.170), (0.055, 0.06, 0.020), METAL_LIGHT, std));
-    v.push(part("re-sewn strap patch", Torso, (0.005, 1.33, -0.169), (0.08, 0.10, 0.014), POUCH, std));
+    v.push(part(
+        "pack strap back",
+        Torso,
+        (0.005, 1.29, -0.160),
+        (0.075, 0.50, 0.030),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "pack strap buckle 1",
+        Torso,
+        (0.005, 1.42, -0.170),
+        (0.055, 0.06, 0.020),
+        METAL_LIGHT,
+        std,
+    ));
+    v.push(part(
+        "pack strap buckle 2",
+        Torso,
+        (0.005, 1.20, -0.170),
+        (0.055, 0.06, 0.020),
+        METAL_LIGHT,
+        std,
+    ));
+    v.push(part(
+        "re-sewn strap patch",
+        Torso,
+        (0.005, 1.33, -0.169),
+        (0.08, 0.10, 0.014),
+        POUCH,
+        std,
+    ));
     // The diagonal strap (#32), stepped across the pouch row's top
     // from under the radio toward the right hip, brass-buckled.
-    v.push(part("diagonal strap 1", Torso, (0.07, 1.13, -0.196), (0.17, 0.055, 0.024), WEBBING, std));
-    v.push(part("diagonal strap 2", Torso, (-0.04, 1.06, -0.196), (0.17, 0.055, 0.024), WEBBING, std));
-    v.push(part("diagonal strap buckle", Torso, (-0.115, 1.02, -0.198), (0.055, 0.06, 0.022), METAL_LIGHT, std));
+    v.push(part(
+        "diagonal strap 1",
+        Torso,
+        (0.07, 1.13, -0.196),
+        (0.17, 0.055, 0.024),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "diagonal strap 2",
+        Torso,
+        (-0.04, 1.06, -0.196),
+        (0.17, 0.055, 0.024),
+        WEBBING,
+        std,
+    ));
+    v.push(part(
+        "diagonal strap buckle",
+        Torso,
+        (-0.115, 1.02, -0.198),
+        (0.055, 0.06, 0.022),
+        METAL_LIGHT,
+        std,
+    ));
     // THE RADIO (#32): high on the LEFT of the back, its top at the
     // shoulder line — a dark case with its cap and knobs, and TWO
     // WHIPS: the tall one straight, the shorter one bent at the tip
     // the way the reference's second whip bends.
-    v.push(part("radio pack", Torso, (0.135, 1.35, -0.20), (0.18, 0.36, 0.095), RADIO, std));
-    v.push(part("radio cap", Torso, (0.135, 1.545, -0.20), (0.16, 0.05, 0.085), RADIO, std));
-    v.push(part("radio knob 1", Torso, (0.09, 1.585, -0.20), (0.04, 0.04, 0.04), PLASTIC, std));
-    v.push(part("radio knob 2", Torso, (0.17, 1.585, -0.20), (0.035, 0.035, 0.035), PLASTIC, std));
-    v.push(part("whip tall lower", Torso, (0.20, 1.87, -0.205), (0.024, 0.58, 0.024), PLASTIC, std));
-    v.push(part("whip tall upper", Torso, (0.20, 2.28, -0.205), (0.016, 0.26, 0.016), PLASTIC, std));
-    v.push(part("whip short lower", Torso, (0.115, 1.80, -0.205), (0.020, 0.44, 0.020), PLASTIC, std));
-    v.push(part("whip short tip", Torso, (0.128, 2.10, -0.205), (0.016, 0.18, 0.016), PLASTIC, std));
+    v.push(part(
+        "radio pack",
+        Torso,
+        (0.135, 1.35, -0.20),
+        (0.18, 0.36, 0.095),
+        RADIO,
+        std,
+    ));
+    v.push(part(
+        "radio cap",
+        Torso,
+        (0.135, 1.545, -0.20),
+        (0.16, 0.05, 0.085),
+        RADIO,
+        std,
+    ));
+    v.push(part(
+        "radio knob 1",
+        Torso,
+        (0.09, 1.585, -0.20),
+        (0.04, 0.04, 0.04),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "radio knob 2",
+        Torso,
+        (0.17, 1.585, -0.20),
+        (0.035, 0.035, 0.035),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "whip tall lower",
+        Torso,
+        (0.20, 1.87, -0.205),
+        (0.024, 0.58, 0.024),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "whip tall upper",
+        Torso,
+        (0.20, 2.28, -0.205),
+        (0.016, 0.26, 0.016),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "whip short lower",
+        Torso,
+        (0.115, 1.80, -0.205),
+        (0.020, 0.44, 0.020),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "whip short tip",
+        Torso,
+        (0.128, 2.10, -0.205),
+        (0.016, 0.18, 0.016),
+        PLASTIC,
+        std,
+    ));
     // Whip mounts: the whips root in a solid base on the pack's
     // cap, not in air — a floating line reads as a wire; a line
     // growing out of a block reads as an antenna.
-    v.push(part("whip mount tall", Torso, (0.20, 1.575, -0.205), (0.05, 0.05, 0.05), PLASTIC, std));
-    v.push(part("whip mount short", Torso, (0.115, 1.575, -0.205), (0.045, 0.05, 0.045), PLASTIC, std));
+    v.push(part(
+        "whip mount tall",
+        Torso,
+        (0.20, 1.575, -0.205),
+        (0.05, 0.05, 0.05),
+        PLASTIC,
+        std,
+    ));
+    v.push(part(
+        "whip mount short",
+        Torso,
+        (0.115, 1.575, -0.205),
+        (0.045, 0.05, 0.045),
+        PLASTIC,
+        std,
+    ));
     // The long gun, slung under the pack down his left side (#32):
     // stock at the pack's hem, receiver, magazine, barrel to the knee.
-    v.push(part("slung gun stock", Torso, (0.23, 1.24, -0.09), (0.06, 0.13, 0.075), LEATHER, std));
-    v.push(part("slung gun receiver", Torso, (0.235, 1.02, -0.09), (0.05, 0.34, 0.10), METAL, std));
-    v.push(part("slung gun magazine", Torso, (0.235, 0.86, -0.05), (0.044, 0.15, 0.045), METAL, std));
-    v.push(part("slung gun barrel", Torso, (0.238, 0.66, -0.09), (0.034, 0.40, 0.034), METAL, std));
+    v.push(part(
+        "slung gun stock",
+        Torso,
+        (0.23, 1.24, -0.09),
+        (0.06, 0.13, 0.075),
+        LEATHER,
+        std,
+    ));
+    v.push(part(
+        "slung gun receiver",
+        Torso,
+        (0.235, 1.02, -0.09),
+        (0.05, 0.34, 0.10),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "slung gun magazine",
+        Torso,
+        (0.235, 0.86, -0.05),
+        (0.044, 0.15, 0.045),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "slung gun barrel",
+        Torso,
+        (0.238, 0.66, -0.09),
+        (0.034, 0.40, 0.034),
+        METAL,
+        std,
+    ));
     // The holster (#31/#32): worn leather on the RIGHT hip, the
     // USP's grip above it, a webbing flap strap on its outer face.
-    v.push(part("holster", Pelvis, (-0.245, 1.00, 0.03), (0.07, 0.23, 0.125), LEATHER, std));
-    v.push(part("holster grip", Pelvis, (-0.245, 1.145, 0.03), (0.038, 0.075, 0.05), STRAP, std));
-    v.push(part("holster flap strap", Pelvis, (-0.283, 1.06, 0.03), (0.024, 0.10, 0.06), WEBBING, std));
+    v.push(part(
+        "holster",
+        Pelvis,
+        (-0.245, 1.00, 0.03),
+        (0.07, 0.23, 0.125),
+        LEATHER,
+        std,
+    ));
+    v.push(part(
+        "holster grip",
+        Pelvis,
+        (-0.245, 1.145, 0.03),
+        (0.038, 0.075, 0.05),
+        STRAP,
+        std,
+    ));
+    v.push(part(
+        "holster flap strap",
+        Pelvis,
+        (-0.283, 1.06, 0.03),
+        (0.024, 0.10, 0.06),
+        WEBBING,
+        std,
+    ));
     // ---- head: bare, weathered — hair, ears, the box nose, and
     // the painted face on its quad (see face_quad).
-    v.push(part("neck", Head, (0.0, 1.54, 0.0), (0.14, 0.10, 0.14), SKIN, std));
-    v.push(part("head", Head, (0.0, 1.70, 0.0), (0.25, 0.30, 0.265), SKIN, std));
-    v.push(part("hair cap", Head, (0.0, 1.80, 0.0), (0.265, 0.13, 0.285), HAIR, std));
-    v.push(part("hair back", Head, (0.0, 1.685, -0.131), (0.24, 0.25, 0.012), HAIR, std));
-    v.push(part("ear L", Head, (0.124, 1.68, 0.0), (0.032, 0.06, 0.05), SKIN, std));
-    v.push(part("ear R", Head, (-0.124, 1.68, 0.0), (0.032, 0.06, 0.05), SKIN, std));
+    v.push(part(
+        "neck",
+        Head,
+        (0.0, 1.54, 0.0),
+        (0.14, 0.10, 0.14),
+        SKIN,
+        std,
+    ));
+    v.push(part(
+        "head",
+        Head,
+        (0.0, 1.70, 0.0),
+        (0.25, 0.30, 0.265),
+        SKIN,
+        std,
+    ));
+    v.push(part(
+        "hair cap",
+        Head,
+        (0.0, 1.80, 0.0),
+        (0.265, 0.13, 0.285),
+        HAIR,
+        std,
+    ));
+    v.push(part(
+        "hair back",
+        Head,
+        (0.0, 1.685, -0.131),
+        (0.24, 0.25, 0.012),
+        HAIR,
+        std,
+    ));
+    v.push(part(
+        "ear L",
+        Head,
+        (0.124, 1.68, 0.0),
+        (0.032, 0.06, 0.05),
+        SKIN,
+        std,
+    ));
+    v.push(part(
+        "ear R",
+        Head,
+        (-0.124, 1.68, 0.0),
+        (0.032, 0.06, 0.05),
+        SKIN,
+        std,
+    ));
     // The nose — offset a whisper to his left: once broken, set
     // imperfectly, the way the reference's sits.
-    v.push(part("nose", Head, (0.004, 1.662, 0.133), (0.052, 0.072, 0.038), SKIN, std));
+    v.push(part(
+        "nose",
+        Head,
+        (0.004, 1.662, 0.133),
+        (0.052, 0.072, 0.038),
+        SKIN,
+        std,
+    ));
     // Solidity (beauty pass): the face is shaped by MASS, not by
     // paint alone — a brow shelf casting its own shadow line and
     // a jaw block giving the chin weight, so light, not a quad,
     // reads the face at checkpoint distance. The painted face
     // (face_quad) still carries the features; these planes give
     // them something to sit on.
-    v.push(part("brow shelf", Head, (0.0, 1.745, 0.105), (0.23, 0.045, 0.09), SKIN, std));
-    v.push(part("jaw block", Head, (0.0, 1.585, 0.01), (0.21, 0.07, 0.23), SKIN, std));
+    v.push(part(
+        "brow shelf",
+        Head,
+        (0.0, 1.745, 0.105),
+        (0.23, 0.045, 0.09),
+        SKIN,
+        std,
+    ));
+    v.push(part(
+        "jaw block",
+        Head,
+        (0.0, 1.585, 0.01),
+        (0.21, 0.07, 0.23),
+        SKIN,
+        std,
+    ));
     // ---- arms: coat sleeves, leather gloves ----
     for (sx, up, fore, hand) in [
         (1.0f32, UpperArmL, ForearmL, HandL),
         (-1.0f32, UpperArmR, ForearmR, HandR),
     ] {
-        v.push(part(if sx > 0.0 { "upper arm L" } else { "upper arm R" }, up,
-            (0.30 * sx, 1.315, 0.0), (0.175, 0.29, 0.18), WAXED, std));
-        v.push(part(if sx > 0.0 { "forearm L" } else { "forearm R" }, fore,
-            (0.30 * sx, 1.035, 0.005), (0.155, 0.27, 0.16), WAXED, std));
-        v.push(part(if sx > 0.0 { "cuff L" } else { "cuff R" }, fore,
-            (0.30 * sx, 0.928, 0.008), (0.128, 0.05, 0.135), WEBBING, std));
-        v.push(part(if sx > 0.0 { "glove L" } else { "glove R" }, hand,
-            (0.30 * sx, 0.845, 0.02), (0.13, 0.145, 0.14), LEATHER, std));
-        v.push(part(if sx > 0.0 { "thumb L" } else { "thumb R" }, hand,
-            (0.248 * sx, 0.825, 0.05), (0.05, 0.09, 0.05), LEATHER, std));
+        v.push(part(
+            if sx > 0.0 {
+                "upper arm L"
+            } else {
+                "upper arm R"
+            },
+            up,
+            (0.30 * sx, 1.315, 0.0),
+            (0.175, 0.29, 0.18),
+            WAXED,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 { "forearm L" } else { "forearm R" },
+            fore,
+            (0.30 * sx, 1.035, 0.005),
+            (0.155, 0.27, 0.16),
+            WAXED,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 { "cuff L" } else { "cuff R" },
+            fore,
+            (0.30 * sx, 0.928, 0.008),
+            (0.128, 0.05, 0.135),
+            WEBBING,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 { "glove L" } else { "glove R" },
+            hand,
+            (0.30 * sx, 0.845, 0.02),
+            (0.13, 0.145, 0.14),
+            LEATHER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 { "thumb L" } else { "thumb R" },
+            hand,
+            (0.248 * sx, 0.825, 0.05),
+            (0.05, 0.09, 0.05),
+            LEATHER,
+            std,
+        ));
     }
     // THE WATCH (left wrist): a dark strap around the forearm, and
     // the case on the wrist's INNER face — face-inward, the way he
     // wears it (#31/#32). It reads at close range or not at all,
     // which is what a watch is.
-    v.push(part("watch strap", ForearmL, (0.30, 0.975, 0.005), (0.14, 0.032, 0.15), STRAP, std));
-    v.push(part("watch case (face-inward)", ForearmL, (0.228, 0.975, 0.005), (0.026, 0.05, 0.05), METAL, std));
+    v.push(part(
+        "watch strap",
+        ForearmL,
+        (0.30, 0.975, 0.005),
+        (0.14, 0.032, 0.15),
+        STRAP,
+        std,
+    ));
+    v.push(part(
+        "watch case (face-inward)",
+        ForearmL,
+        (0.228, 0.975, 0.005),
+        (0.026, 0.05, 0.05),
+        METAL,
+        std,
+    ));
     // ---- legs: plain trousers, tall lace-up boots — no pads, no
     // rigs; the street figure's legs are a working man's.
     for (sx, thigh, shin, foot) in [
         (1.0f32, ThighL, ShinL, FootL),
         (-1.0f32, ThighR, ShinR, FootR),
     ] {
-        v.push(part(if sx > 0.0 { "thigh L" } else { "thigh R" }, thigh,
-            (0.115 * sx, 0.775, 0.0), (0.20, 0.20, 0.215), TROUSER, std));
-        v.push(part(if sx > 0.0 { "thigh lower L" } else { "thigh lower R" }, thigh,
-            (0.115 * sx, 0.60, 0.0), (0.185, 0.17, 0.20), TROUSER, std));
-        v.push(part(if sx > 0.0 { "shin upper L" } else { "shin upper R" }, shin,
-            (0.115 * sx, 0.435, 0.0), (0.18, 0.16, 0.19), TROUSER, std));
-        v.push(part(if sx > 0.0 { "trouser cuff L" } else { "trouser cuff R" }, shin,
-            (0.115 * sx, 0.345, 0.0), (0.172, 0.055, 0.19), TROUSER, std));
-        v.push(part(if sx > 0.0 { "boot shaft L" } else { "boot shaft R" }, shin,
-            (0.115 * sx, 0.225, 0.0), (0.165, 0.26, 0.18), LEATHER, std));
-        v.push(part(if sx > 0.0 { "boot lace panel L" } else { "boot lace panel R" }, shin,
-            (0.115 * sx, 0.24, 0.086), (0.095, 0.235, 0.024), STRAP, std));
-        v.push(part(if sx > 0.0 { "boot foot L" } else { "boot foot R" }, foot,
-            (0.115 * sx, 0.055, 0.045), (0.155, 0.11, 0.31), LEATHER, std));
-        v.push(part(if sx > 0.0 { "boot toe L" } else { "boot toe R" }, foot,
-            (0.115 * sx, 0.05, 0.185), (0.135, 0.085, 0.05), LEATHER, std));
-        v.push(part(if sx > 0.0 { "boot sole L" } else { "boot sole R" }, foot,
-            (0.115 * sx, 0.016, 0.03), (0.155, 0.032, 0.33), PLASTIC, std));
-        v.push(part(if sx > 0.0 { "boot heel L" } else { "boot heel R" }, foot,
-            (0.115 * sx, 0.05, -0.105), (0.14, 0.10, 0.06), LEATHER, std));
+        v.push(part(
+            if sx > 0.0 { "thigh L" } else { "thigh R" },
+            thigh,
+            (0.115 * sx, 0.775, 0.0),
+            (0.20, 0.20, 0.215),
+            TROUSER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "thigh lower L"
+            } else {
+                "thigh lower R"
+            },
+            thigh,
+            (0.115 * sx, 0.60, 0.0),
+            (0.185, 0.17, 0.20),
+            TROUSER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "shin upper L"
+            } else {
+                "shin upper R"
+            },
+            shin,
+            (0.115 * sx, 0.435, 0.0),
+            (0.18, 0.16, 0.19),
+            TROUSER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "trouser cuff L"
+            } else {
+                "trouser cuff R"
+            },
+            shin,
+            (0.115 * sx, 0.345, 0.0),
+            (0.172, 0.055, 0.19),
+            TROUSER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "boot shaft L"
+            } else {
+                "boot shaft R"
+            },
+            shin,
+            (0.115 * sx, 0.225, 0.0),
+            (0.165, 0.26, 0.18),
+            LEATHER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "boot lace panel L"
+            } else {
+                "boot lace panel R"
+            },
+            shin,
+            (0.115 * sx, 0.24, 0.086),
+            (0.095, 0.235, 0.024),
+            STRAP,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "boot foot L"
+            } else {
+                "boot foot R"
+            },
+            foot,
+            (0.115 * sx, 0.055, 0.045),
+            (0.155, 0.11, 0.31),
+            LEATHER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 { "boot toe L" } else { "boot toe R" },
+            foot,
+            (0.115 * sx, 0.05, 0.185),
+            (0.135, 0.085, 0.05),
+            LEATHER,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "boot sole L"
+            } else {
+                "boot sole R"
+            },
+            foot,
+            (0.115 * sx, 0.016, 0.03),
+            (0.155, 0.032, 0.33),
+            PLASTIC,
+            std,
+        ));
+        v.push(part(
+            if sx > 0.0 {
+                "boot heel L"
+            } else {
+                "boot heel R"
+            },
+            foot,
+            (0.115 * sx, 0.05, -0.105),
+            (0.14, 0.10, 0.06),
+            LEATHER,
+            std,
+        ));
     }
     // ---- the HK USP, in the right hand ----
     // Modelled along the hand's -Y axis (muzzle down at bind, like a
@@ -983,15 +1603,78 @@ fn parts() -> Vec<Part> {
     // different man's gun).
     let h = HandR;
     let hx = -0.30f32;
-    v.push(part("USP grip", h, (hx, 0.835, 0.03), (0.05, 0.115, 0.06), STRAP, std));
-    v.push(part("USP mag base", h, (hx, 0.775, 0.032), (0.052, 0.02, 0.062), METAL, std));
-    v.push(part("USP frame", h, (hx, 0.895, 0.045), (0.048, 0.05, 0.16), METAL, std));
-    v.push(part("USP slide", h, (hx, 0.925, 0.045), (0.046, 0.028, 0.185), METAL, std));
-    v.push(part("USP barrel tip", h, (hx, 0.918, 0.135), (0.028, 0.028, 0.03), METAL, std));
-    v.push(part("USP trigger guard", h, (hx, 0.855, 0.085), (0.022, 0.045, 0.07), METAL, std));
-    v.push(part("USP rear sight", h, (hx, 0.948, -0.028), (0.034, 0.016, 0.02), METAL, std));
-    v.push(part("USP front sight", h, (hx, 0.946, 0.118), (0.018, 0.014, 0.012), METAL, std));
-    v.push(part("USP hammer", h, (hx, 0.925, -0.048), (0.02, 0.03, 0.02), METAL, std));
+    v.push(part(
+        "USP grip",
+        h,
+        (hx, 0.835, 0.03),
+        (0.05, 0.115, 0.06),
+        STRAP,
+        std,
+    ));
+    v.push(part(
+        "USP mag base",
+        h,
+        (hx, 0.775, 0.032),
+        (0.052, 0.02, 0.062),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP frame",
+        h,
+        (hx, 0.895, 0.045),
+        (0.048, 0.05, 0.16),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP slide",
+        h,
+        (hx, 0.925, 0.045),
+        (0.046, 0.028, 0.185),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP barrel tip",
+        h,
+        (hx, 0.918, 0.135),
+        (0.028, 0.028, 0.03),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP trigger guard",
+        h,
+        (hx, 0.855, 0.085),
+        (0.022, 0.045, 0.07),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP rear sight",
+        h,
+        (hx, 0.948, -0.028),
+        (0.034, 0.016, 0.02),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP front sight",
+        h,
+        (hx, 0.946, 0.118),
+        (0.018, 0.014, 0.012),
+        METAL,
+        std,
+    ));
+    v.push(part(
+        "USP hammer",
+        h,
+        (hx, 0.925, -0.048),
+        (0.02, 0.03, 0.02),
+        METAL,
+        std,
+    ));
     v
 }
 
@@ -1174,8 +1857,8 @@ impl PoseFrame {
     /// needed: every angle in play stays well inside ±180°).
     pub fn lerp(&self, other: &PoseFrame, t: f32) -> PoseFrame {
         let mut angles = [Vec3::ZERO; BONE_COUNT];
-        for i in 0..BONE_COUNT {
-            angles[i] = self.angles[i].lerp(other.angles[i], t);
+        for (i, a) in angles.iter_mut().enumerate() {
+            *a = self.angles[i].lerp(other.angles[i], t);
         }
         PoseFrame {
             angles,
@@ -1397,12 +2080,7 @@ fn bone_from_idx(i: usize) -> Bone {
 /// pose is expressed through the [`PoseFrame`] interface and built
 /// by [`build_operator_frame`] — one path for staged and animated
 /// geometry alike.
-pub fn build_operator(
-    pose: OperatorPose,
-    spot: Vec3,
-    ground_y: f32,
-    yaw_deg: f32,
-) -> OperatorMesh {
+pub fn build_operator(pose: OperatorPose, spot: Vec3, ground_y: f32, yaw_deg: f32) -> OperatorMesh {
     build_operator_frame(&PoseFrame::from_pose(pose), spot, ground_y, yaw_deg)
 }
 
@@ -1441,7 +2119,12 @@ pub fn build_operator_frame(
         // Corners are listed BL, BR, TR, TL as seen from the front;
         // the box faces' UV order gives BL the rect's bottom-left,
         // so the painted face stands upright.
-        uvs: [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]],
+        uvs: [
+            [uv[0], uv[3]],
+            [uv[2], uv[3]],
+            [uv[2], uv[1]],
+            [uv[0], uv[1]],
+        ],
         mat: MAT_STANDARD,
     };
     build_figure_frame(&specs, &[face], frame, spot, ground_y, yaw_deg)
@@ -1499,10 +2182,7 @@ pub fn build_figure_frame(
         let half = p.size * 0.5;
         let base = vertices.len() as u32;
         for (n, corners) in FACES {
-            let nrm = m
-                .transform_vector3(Vec3::from(n))
-                .normalize()
-                .to_array();
+            let nrm = m.transform_vector3(Vec3::from(n)).normalize().to_array();
             // UV corners follow the face's view order: BL, BR, TR, TL
             // with v growing downward in the authored atlas.
             let face_uv = [
@@ -1537,10 +2217,7 @@ pub fn build_figure_frame(
 
     for q in quads {
         let m = root * mats[q.bone.idx()];
-        let nrm = m
-            .transform_vector3(q.normal)
-            .normalize()
-            .to_array();
+        let nrm = m.transform_vector3(q.normal).normalize().to_array();
         let base = vertices.len() as u32;
         for (ci, c) in q.corners.iter().enumerate() {
             let world = m.transform_point3(*c);
@@ -1665,7 +2342,11 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
             // to the hands; cuffs where the gloves start.
             for sgn in [1.0f32, -1.0] {
                 v.push(vm_part(
-                    if sgn > 0.0 { "vm sleeve L" } else { "vm sleeve R" },
+                    if sgn > 0.0 {
+                        "vm sleeve L"
+                    } else {
+                        "vm sleeve R"
+                    },
                     (sx * sgn, hy, 0.30),
                     (0.155, 0.15, 0.40),
                     sleeve,
@@ -1677,7 +2358,11 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
                     WEBBING,
                 ));
                 v.push(vm_part(
-                    if sgn > 0.0 { "vm glove L" } else { "vm glove R" },
+                    if sgn > 0.0 {
+                        "vm glove L"
+                    } else {
+                        "vm glove R"
+                    },
                     (hx * sgn, hy, hz),
                     (0.13, 0.13, 0.16),
                     LEATHER,
@@ -1686,7 +2371,12 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
             // Street only: the face-inward watch — strap wrapping
             // the left sleeve, case on the wrist's inner (−x) face.
             if config == ViewmodelConfig::Street {
-                v.push(vm_part("vm watch strap", (sx, hy, 0.42), (0.165, 0.04, 0.17), STRAP));
+                v.push(vm_part(
+                    "vm watch strap",
+                    (sx, hy, 0.42),
+                    (0.165, 0.04, 0.17),
+                    STRAP,
+                ));
                 v.push(vm_part(
                     "vm watch case (face-inward)",
                     (sx - 0.085, hy, 0.42),
@@ -1698,10 +2388,30 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
             // is −x): grip, frame, slide — one solid mass, sights
             // kept chunky (no 10 mm sight wires at arm's length).
             let gx = -hx;
-            v.push(vm_part("vm USP grip", (gx, hy - 0.03, hz + 0.02), (0.05, 0.115, 0.06), STRAP));
-            v.push(vm_part("vm USP frame", (gx, uy - 0.02, uz), (0.048, 0.05, 0.16), METAL));
-            v.push(vm_part("vm USP slide", (gx, uy, uz), (0.046, 0.028, 0.20), METAL));
-            v.push(vm_part("vm USP front sight", (gx, uy + 0.02, uz + 0.10), (0.018, 0.014, 0.012), METAL));
+            v.push(vm_part(
+                "vm USP grip",
+                (gx, hy - 0.03, hz + 0.02),
+                (0.05, 0.115, 0.06),
+                STRAP,
+            ));
+            v.push(vm_part(
+                "vm USP frame",
+                (gx, uy - 0.02, uz),
+                (0.048, 0.05, 0.16),
+                METAL,
+            ));
+            v.push(vm_part(
+                "vm USP slide",
+                (gx, uy, uz),
+                (0.046, 0.028, 0.20),
+                METAL,
+            ));
+            v.push(vm_part(
+                "vm USP front sight",
+                (gx, uy + 0.02, uz + 0.10),
+                (0.018, 0.014, 0.012),
+                METAL,
+            ));
         }
         ViewmodelPose::LauncherRaise | ViewmodelPose::LauncherSwing => {
             let (dy, dz) = match pose {
@@ -1724,27 +2434,65 @@ pub fn viewmodel_parts(config: ViewmodelConfig, pose: ViewmodelPose) -> Vec<Part
                     }
                 };
                 v.push(vm_part(
-                    if sgn > 0.0 { "vm sleeve L" } else { "vm sleeve R" },
+                    if sgn > 0.0 {
+                        "vm sleeve L"
+                    } else {
+                        "vm sleeve R"
+                    },
                     (sx * sgn, dy, sz),
                     (0.155, 0.15, 0.36),
                     sleeve,
                 ));
                 v.push(vm_part(
-                    if sgn > 0.0 { "vm glove L" } else { "vm glove R" },
+                    if sgn > 0.0 {
+                        "vm glove L"
+                    } else {
+                        "vm glove R"
+                    },
                     (if sgn > 0.0 { 0.13 } else { -0.13 }, dy, dz - 0.05),
                     (0.13, 0.13, 0.16),
                     LEATHER,
                 ));
             }
-            v.push(vm_part("vm launcher drum", (0.0, dy, dz), (0.20, 0.18, 0.34), METAL));
-            v.push(vm_part("vm launcher coil", (0.0, dy + 0.11, dz), (0.11, 0.08, 0.11), STRAP));
-            v.push(vm_part("vm launcher stock", (0.0, dy - 0.06, dz - 0.20), (0.07, 0.12, 0.10), LEATHER));
+            v.push(vm_part(
+                "vm launcher drum",
+                (0.0, dy, dz),
+                (0.20, 0.18, 0.34),
+                METAL,
+            ));
+            v.push(vm_part(
+                "vm launcher coil",
+                (0.0, dy + 0.11, dz),
+                (0.11, 0.08, 0.11),
+                STRAP,
+            ));
+            v.push(vm_part(
+                "vm launcher stock",
+                (0.0, dy - 0.06, dz - 0.20),
+                (0.07, 0.12, 0.10),
+                LEATHER,
+            ));
             for px in [-0.05f32, 0.0, 0.05] {
-                v.push(vm_part("vm launcher claw prong", (px, dy, dz + 0.22), (0.035, 0.035, 0.10), METAL));
+                v.push(vm_part(
+                    "vm launcher claw prong",
+                    (px, dy, dz + 0.22),
+                    (0.035, 0.035, 0.10),
+                    METAL,
+                ));
             }
             if config == ViewmodelConfig::Street {
-                v.push(vm_part("vm watch strap", (0.15, dy, 0.28), (0.165, 0.04, 0.17), STRAP));
-                v.push(vm_part("vm watch case (face-inward)", (0.065, dy, 0.28), (0.026, 0.05, 0.05), METAL));
+                v.push(vm_part(
+                    "vm watch strap",
+                    (0.15, dy, 0.28),
+                    (0.165, 0.04, 0.17),
+                    STRAP,
+                ));
+                v.push(vm_part(
+                    "vm watch case (face-inward)",
+                    (0.065, dy, 0.28),
+                    (0.026, 0.05, 0.05),
+                    METAL,
+                ));
             }
         }
     }

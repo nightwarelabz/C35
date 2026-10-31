@@ -56,9 +56,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use c35::world::{iso_utc, world_state, Observer, WorldState};
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|w| w[0] == name)
-        .map(|w| w[1].clone())
+    args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
 }
 
 fn env_f32(name: &str) -> Option<f32> {
@@ -261,14 +259,9 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(2.0);
     let operator_arg = arg_value(&args, "--operator");
-    let start_level: Option<usize> =
-        arg_value(&args, "--start-level").and_then(|v| v.parse().ok());
+    let start_level: Option<usize> = arg_value(&args, "--start-level").and_then(|v| v.parse().ok());
     let save_at: Vec<usize> = arg_value(&args, "--save-at")
-        .map(|v| {
-            v.split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect()
-        })
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
         .unwrap_or_default();
     // M7 seams: the movement drive and the velocity-rejection A/B.
     let move_arg = arg_value(&args, "--move");
@@ -350,20 +343,22 @@ fn main() {
         }
     };
 
-    let out_tex = renderer.device.create_texture(&c35::wgpu::TextureDescriptor {
-        label: Some("host output"),
-        size: c35::wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: c35::wgpu::TextureDimension::D2,
-        format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
+    let out_tex = renderer
+        .device
+        .create_texture(&c35::wgpu::TextureDescriptor {
+            label: Some("host output"),
+            size: c35::wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: c35::wgpu::TextureDimension::D2,
+            format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
     let out_view = out_tex.create_view(&Default::default());
 
     // ---- M7 movement drive state ----
@@ -430,11 +425,18 @@ fn main() {
             pose_at(0.0)
         };
         renderer.render(&out_view, &wp, &world, 0.0);
-        let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
     }
     let _ = renderer.drain_gpu_samples();
 
-    let frames = if drive.is_some() && !frames_given { 20000 } else { frames };
+    let frames = if drive.is_some() && !frames_given {
+        20000
+    } else {
+        frames
+    };
     let mut frame_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut update_ms: Vec<f64> = Vec::with_capacity(frames);
     let mut printed_adj = 0usize;
@@ -479,12 +481,19 @@ fn main() {
             }
             (i as f32 / 60.0, pose)
         } else {
-            let t = if drift { i as f32 / 60.0 * drift_rate } else { 0.0 };
+            let t = if drift {
+                i as f32 / 60.0 * drift_rate
+            } else {
+                0.0
+            };
             (t, pose_at(t))
         };
         let start = Instant::now();
         renderer.render(&out_view, &pose, &world, t);
-        let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         frame_ms.push(ms);
         update_ms.push(renderer.core_stats().update_ms);
@@ -492,7 +501,13 @@ fn main() {
             // Paired-frame evidence (the motion A/B): the same frame
             // index in two runs is the same drift instant, bit for bit.
             let stem = out.strip_suffix(".png").unwrap_or(&out);
-            save_png(&renderer, &out_tex, width, height, &format!("{stem}-f{i}.png"));
+            save_png(
+                &renderer,
+                &out_tex,
+                width,
+                height,
+                &format!("{stem}-f{i}.png"),
+            );
         }
         // The governor eats the same number the ledger reports; in live
         // mode its adjustments print as they happen.
@@ -502,7 +517,10 @@ fn main() {
             let a = adj[printed_adj];
             println!(
                 "[governor] frame {} : level {} -> {} (frame EMA {:.2} ms vs target {:.1} ms)",
-                a.frame, a.from_level, a.to_level, a.ema_ms,
+                a.frame,
+                a.from_level,
+                a.to_level,
+                a.ema_ms,
                 renderer.governor().target_ms()
             );
             printed_adj += 1;
@@ -562,7 +580,9 @@ fn main() {
             renderer.shadow_map_size()
         );
     } else if world.sun_elevation_deg > 0.0 {
-        println!("shadow pass      : shed by the governor (sun is up, shadow map off at this level)");
+        println!(
+            "shadow pass      : shed by the governor (sun is up, shadow map off at this level)"
+        );
     } else {
         println!("shadow pass      : skipped — sun below horizon (shadows are sun-only)");
     }
@@ -691,11 +711,12 @@ fn save_png(
         usage: c35::wgpu::BufferUsages::MAP_READ | c35::wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut encoder = renderer
-        .device
-        .create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
-            label: Some("png copy"),
-        });
+    let mut encoder =
+        renderer
+            .device
+            .create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
+                label: Some("png copy"),
+            });
     encoder.copy_texture_to_buffer(
         c35::wgpu::TexelCopyTextureInfo {
             texture: tex,
@@ -719,7 +740,10 @@ fn save_png(
     );
     renderer.queue.submit([encoder.finish()]);
     buf.slice(..).map_async(c35::wgpu::MapMode::Read, |_| {});
-    let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+    let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
     let range = buf.slice(..).get_mapped_range();
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for row in 0..height as usize {

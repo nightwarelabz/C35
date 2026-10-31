@@ -239,6 +239,12 @@ impl Type1Governor {
     }
 }
 
+impl Default for Type1Governor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ----------------------------------------------------------------
 // TYPE 2
 // ----------------------------------------------------------------
@@ -391,8 +397,7 @@ impl Type2Governor {
                 // ~1 s, then owes recovery.
                 if self.state_ticks > 0 {
                     self.state_ticks -= 1;
-                    self.speed = Self::CHARGE_SPEED
-                        * (self.state_ticks as f32 / 240.0);
+                    self.speed = Self::CHARGE_SPEED * (self.state_ticks as f32 / 240.0);
                 } else {
                     self.state = Type2State::Recovery;
                     self.state_ticks = self.recovery_owed;
@@ -425,5 +430,11 @@ impl Type2Governor {
         self.state_ticks = 240;
         self.recovery_owed = 480;
         true
+    }
+}
+
+impl Default for Type2Governor {
+    fn default() -> Self {
+        Self::new()
     }
 }

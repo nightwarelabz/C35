@@ -76,28 +76,53 @@ fn at(file: &str, value: &Value, message: impl Into<String>) -> String {
 // ---------------------------------------------------------------------
 
 fn expect_obj<'a>(file: &str, v: &'a Value, what: &str) -> Result<&'a [(String, Value)], String> {
-    v.as_obj()
-        .ok_or_else(|| at(file, v, format!("{what} must be an object, got {}", v.type_name())))
+    v.as_obj().ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} must be an object, got {}", v.type_name()),
+        )
+    })
 }
 
 fn expect_arr<'a>(file: &str, v: &'a Value, what: &str) -> Result<&'a [Value], String> {
-    v.as_arr()
-        .ok_or_else(|| at(file, v, format!("{what} must be an array, got {}", v.type_name())))
+    v.as_arr().ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} must be an array, got {}", v.type_name()),
+        )
+    })
 }
 
 fn expect_str<'a>(file: &str, v: &'a Value, what: &str) -> Result<&'a str, String> {
-    v.as_str()
-        .ok_or_else(|| at(file, v, format!("{what} must be a string, got {}", v.type_name())))
+    v.as_str().ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} must be a string, got {}", v.type_name()),
+        )
+    })
 }
 
 fn expect_num(file: &str, v: &Value, what: &str) -> Result<f64, String> {
-    v.as_num()
-        .ok_or_else(|| at(file, v, format!("{what} must be a number, got {}", v.type_name())))
+    v.as_num().ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} must be a number, got {}", v.type_name()),
+        )
+    })
 }
 
 fn expect_bool(file: &str, v: &Value, what: &str) -> Result<bool, String> {
-    v.as_bool()
-        .ok_or_else(|| at(file, v, format!("{what} must be a boolean, got {}", v.type_name())))
+    v.as_bool().ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} must be a boolean, got {}", v.type_name()),
+        )
+    })
 }
 
 fn check_fields(file: &str, v: &Value, allowed: &[&str], what: &str) -> Result<(), String> {
@@ -118,8 +143,13 @@ fn check_fields(file: &str, v: &Value, allowed: &[&str], what: &str) -> Result<(
 }
 
 fn required<'a>(file: &str, v: &'a Value, name: &str, what: &str) -> Result<&'a Value, String> {
-    v.field(name)
-        .ok_or_else(|| at(file, v, format!("{what} is missing required field '{name}'")))
+    v.field(name).ok_or_else(|| {
+        at(
+            file,
+            v,
+            format!("{what} is missing required field '{name}'"),
+        )
+    })
 }
 
 fn parse_id_field(file: &str, v: &Value, what: &str) -> Result<String, String> {
@@ -134,12 +164,7 @@ fn parse_id_field(file: &str, v: &Value, what: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
-fn parse_num_array(
-    file: &str,
-    v: &Value,
-    n: usize,
-    what: &str,
-) -> Result<Vec<f64>, String> {
+fn parse_num_array(file: &str, v: &Value, n: usize, what: &str) -> Result<Vec<f64>, String> {
     let items = expect_arr(file, v, what)?;
     if items.len() != n {
         return Err(at(
@@ -160,11 +185,7 @@ fn parse_num_array(
 }
 
 /// A number in a recipe, or a `$param` reference.
-fn parse_num_or_param(
-    file: &str,
-    v: &Value,
-    what: &str,
-) -> Result<NumOrParam, String> {
+fn parse_num_or_param(file: &str, v: &Value, what: &str) -> Result<NumOrParam, String> {
     match &v.kind {
         Kind::Num(n) => {
             if n.is_finite() {
@@ -175,13 +196,13 @@ fn parse_num_or_param(
         }
         Kind::Str(s) => {
             let name = s.strip_prefix('$').ok_or_else(|| {
-                at(file, v, format!("{what} must be a number or a '$param' reference"))
+                at(
+                    file,
+                    v,
+                    format!("{what} must be a number or a '$param' reference"),
+                )
             })?;
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(at(
                     file,
                     v,
@@ -193,16 +214,15 @@ fn parse_num_or_param(
         _ => Err(at(
             file,
             v,
-            format!("{what} must be a number or a '$param' reference, got {}", v.type_name()),
+            format!(
+                "{what} must be a number or a '$param' reference, got {}",
+                v.type_name()
+            ),
         )),
     }
 }
 
-fn parse_num_or_param3(
-    file: &str,
-    v: &Value,
-    what: &str,
-) -> Result<[NumOrParam; 3], String> {
+fn parse_num_or_param3(file: &str, v: &Value, what: &str) -> Result<[NumOrParam; 3], String> {
     let items = expect_arr(file, v, what)?;
     if items.len() != 3 {
         return Err(at(
@@ -245,7 +265,7 @@ fn version_satisfies(range: &str, current: Version) -> Result<bool, String> {
     if range.trim().is_empty() {
         return Err("engine range is empty".to_string());
     }
-    for token in range.split(|c| c == ' ' || c == ',').filter(|t| !t.is_empty()) {
+    for token in range.split([' ', ',']).filter(|t| !t.is_empty()) {
         let (op, ver) = if let Some(rest) = token.strip_prefix(">=") {
             (">=", rest)
         } else if let Some(rest) = token.strip_prefix("<=") {
@@ -299,7 +319,15 @@ fn parse_manifest(file: &str, v: &Value) -> Result<ModManifest, String> {
     check_fields(
         file,
         v,
-        &["id", "name", "author", "version", "engine", "load_after", "description"],
+        &[
+            "id",
+            "name",
+            "author",
+            "version",
+            "engine",
+            "load_after",
+            "description",
+        ],
         "manifest",
     )?;
     let id_v = required(file, v, "id", "manifest")?;
@@ -322,15 +350,27 @@ fn parse_manifest(file: &str, v: &Value) -> Result<ModManifest, String> {
             format!("namespace '{namespace}' belongs to the engine; a mod may not claim it"),
         ));
     }
-    let name = expect_str(file, required(file, v, "name", "manifest")?, "manifest name")?;
+    let name = expect_str(
+        file,
+        required(file, v, "name", "manifest")?,
+        "manifest name",
+    )?;
     if name.is_empty() {
         return Err(at(file, v, "manifest name must not be empty"));
     }
-    let author = expect_str(file, required(file, v, "author", "manifest")?, "manifest author")?;
+    let author = expect_str(
+        file,
+        required(file, v, "author", "manifest")?,
+        "manifest author",
+    )?;
     if author.is_empty() {
         return Err(at(file, v, "manifest author must not be empty"));
     }
-    let version = expect_str(file, required(file, v, "version", "manifest")?, "manifest version")?;
+    let version = expect_str(
+        file,
+        required(file, v, "version", "manifest")?,
+        "manifest version",
+    )?;
     if version.is_empty() {
         return Err(at(file, v, "manifest version must not be empty"));
     }
@@ -381,14 +421,16 @@ fn parse_manifest(file: &str, v: &Value) -> Result<ModManifest, String> {
     })
 }
 
-fn parse_param_defs(
-    file: &str,
-    v: &Value,
-) -> Result<BTreeMap<String, ParamDef>, String> {
+fn parse_param_defs(file: &str, v: &Value) -> Result<BTreeMap<String, ParamDef>, String> {
     let entries = expect_obj(file, v, "parameters")?;
     let mut out = BTreeMap::new();
     for (name, def_v) in entries {
-        check_fields(file, def_v, &["default", "min", "max"], "parameter definition")?;
+        check_fields(
+            file,
+            def_v,
+            &["default", "min", "max"],
+            "parameter definition",
+        )?;
         let default_v = required(file, def_v, "default", "parameter definition")?;
         let def = match &default_v.kind {
             Kind::Num(n) => {
@@ -417,9 +459,8 @@ fn parse_param_defs(
                     min,
                     max,
                 };
-                d.check(&ParamValue::Num(*n as f32)).map_err(|e| {
-                    at(file, default_v, format!("parameter '{name}': {e}"))
-                })?;
+                d.check(&ParamValue::Num(*n as f32))
+                    .map_err(|e| at(file, default_v, format!("parameter '{name}': {e}")))?;
                 d
             }
             Kind::Bool(b) => {
@@ -448,14 +489,18 @@ fn parse_param_defs(
     Ok(out)
 }
 
-fn parse_placement_contract(
-    file: &str,
-    v: &Value,
-) -> Result<PlacementContract, String> {
+fn parse_placement_contract(file: &str, v: &Value) -> Result<PlacementContract, String> {
     check_fields(
         file,
         v,
-        &["footprint", "height", "collision", "grapple_anchor", "occluder", "footstep"],
+        &[
+            "footprint",
+            "height",
+            "collision",
+            "grapple_anchor",
+            "occluder",
+            "footstep",
+        ],
         "placement",
     )?;
     let fp = parse_num_array(
@@ -471,7 +516,11 @@ fn parse_placement_contract(
             "placement footprint dimensions must be positive",
         ));
     }
-    let height = expect_num(file, required(file, v, "height", "placement")?, "placement height")?;
+    let height = expect_num(
+        file,
+        required(file, v, "height", "placement")?,
+        "placement height",
+    )?;
     if height <= 0.0 {
         return Err(at(
             file,
@@ -512,7 +561,9 @@ fn parse_placement_contract(
         at(
             file,
             footstep_field,
-            format!("unknown footstep surface '{footstep_s}' (wood, metal, concrete, wet-stone, none)"),
+            format!(
+                "unknown footstep surface '{footstep_s}' (wood, metal, concrete, wet-stone, none)"
+            ),
         )
     })?;
     Ok(PlacementContract {
@@ -576,14 +627,13 @@ fn parse_prop_file(
             at(
                 file,
                 primitive_field,
-                format!("unknown primitive '{prim_s}' (the frozen vocabulary is: {})", PRIMITIVES.join(", ")),
+                format!(
+                    "unknown primitive '{prim_s}' (the frozen vocabulary is: {})",
+                    PRIMITIVES.join(", ")
+                ),
             )
         })?;
-        let size = parse_num_or_param3(
-            file,
-            required(file, part_v, "size", "part")?,
-            "part size",
-        )?;
+        let size = parse_num_or_param3(file, required(file, part_v, "size", "part")?, "part size")?;
         let position = parse_num_or_param3(
             file,
             required(file, part_v, "position", "part")?,
@@ -606,7 +656,10 @@ fn parse_prop_file(
             return Err(at(
                 file,
                 required(file, part_v, "material", "part")?,
-                format!("unknown material '{material}' (the registry is: {})", MATERIALS.join(", ")),
+                format!(
+                    "unknown material '{material}' (the registry is: {})",
+                    MATERIALS.join(", ")
+                ),
             ));
         }
         recipe.push(PartRecipe {
@@ -621,8 +674,7 @@ fn parse_prop_file(
     // unknown materials before the budget is checked.
     let defaults = resolve_defaults(&params);
     let parts_field = required(file, v, "parts", "prop file")?;
-    let parts = resolve_recipe(&recipe, &defaults)
-        .map_err(|e| at(file, parts_field, e))?;
+    let parts = resolve_recipe(&recipe, &defaults).map_err(|e| at(file, parts_field, e))?;
     let mut tags = Vec::new();
     if let Some(t) = v.field("tags") {
         for item in expect_arr(file, t, "tags")? {
@@ -631,7 +683,10 @@ fn parse_prop_file(
                 return Err(at(
                     file,
                     item,
-                    format!("unknown tag '{tag}' (the vocabulary is: {})", TAGS.join(", ")),
+                    format!(
+                        "unknown tag '{tag}' (the vocabulary is: {})",
+                        TAGS.join(", ")
+                    ),
                 ));
             }
             tags.push(tag.to_string());
@@ -737,7 +792,10 @@ fn parse_variant(file: &str, v: &Value) -> Result<ParamValues, String> {
                 return Err(at(
                     file,
                     val,
-                    format!("variant '{k}' must be a number or a boolean, got {}", val.type_name()),
+                    format!(
+                        "variant '{k}' must be a number or a boolean, got {}",
+                        val.type_name()
+                    ),
                 ))
             }
         }
@@ -753,9 +811,10 @@ fn validate_variant(
     prop_id: &str,
 ) -> Result<(), String> {
     for (k, val) in variant {
-        let param = def.params.get(k).ok_or_else(|| {
-            at(file, v, format!("prop '{prop_id}' has no parameter '{k}'"))
-        })?;
+        let param = def
+            .params
+            .get(k)
+            .ok_or_else(|| at(file, v, format!("prop '{prop_id}' has no parameter '{k}'")))?;
         param
             .check(val)
             .map_err(|e| at(file, v, format!("prop '{prop_id}' parameter '{k}': {e}")))?;
@@ -798,12 +857,16 @@ pub struct ReplacementEntry {
     pub variant: ParamValues,
 }
 
+/// What a placements file parses into: the placements, the
+/// replacements, and the warnings gathered on the way.
+type PlacementsOut = (Vec<PlacementEntry>, Vec<ReplacementEntry>, Vec<String>);
+
 fn parse_placements_file(
     file: &str,
     v: &Value,
     shipped: &Registry,
     own_props: &BTreeMap<String, PropDef>,
-) -> Result<(Vec<PlacementEntry>, Vec<ReplacementEntry>, Vec<String>), String> {
+) -> Result<PlacementsOut, String> {
     let mut warnings = Vec::new();
     check_fields(file, v, &["placements", "replacements"], "placements file")?;
     let mut placements = Vec::new();
@@ -889,11 +952,8 @@ fn parse_placements_file(
             let repeat = match entry.field("repeat") {
                 Some(r) => {
                     check_fields(file, r, &["count", "spacing", "axis"], "repeat")?;
-                    let count_f = expect_num(
-                        file,
-                        required(file, r, "count", "repeat")?,
-                        "repeat count",
-                    )?;
+                    let count_f =
+                        expect_num(file, required(file, r, "count", "repeat")?, "repeat count")?;
                     if count_f < 1.0 || count_f > 64.0 || count_f.fract() != 0.0 {
                         return Err(at(
                             file,
@@ -917,11 +977,7 @@ fn parse_placements_file(
                         Some(a) => {
                             let s = expect_str(file, a, "repeat axis")?;
                             if s != "x" && s != "z" {
-                                return Err(at(
-                                    file,
-                                    a,
-                                    "repeat axis must be 'x' or 'z'",
-                                ));
+                                return Err(at(file, a, "repeat axis must be 'x' or 'z'"));
                             }
                             s.chars().next().unwrap()
                         }
@@ -962,10 +1018,8 @@ fn parse_placements_file(
                     format!("replacement targets '{prop}', which is not a shipped prop (replacements apply to shipped props only)"),
                 )
             })?;
-            let variant = parse_variant(
-                file,
-                required(file, entry, "variant", "replacement entry")?,
-            )?;
+            let variant =
+                parse_variant(file, required(file, entry, "variant", "replacement entry")?)?;
             if variant.is_empty() {
                 return Err(at(
                     file,
@@ -1089,9 +1143,7 @@ pub fn load_mod_folder(dir: &Path) -> Result<LoadedMod, QuarantinedMod> {
         if rel_str == "mod.json" {
             continue;
         }
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase());
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
         match ext.as_deref() {
             Some(e) if IMAGE_EXTS.contains(&e) => {
                 reasons.push(format!(
@@ -1103,13 +1155,15 @@ pub fn load_mod_folder(dir: &Path) -> Result<LoadedMod, QuarantinedMod> {
                 if rel_str == "placements.json" {
                     placements_file = Some(path.clone());
                 } else if rel.components().count() == 2
-                    && rel.components().next().map(|c| c.as_os_str() == "props").unwrap_or(false)
+                    && rel
+                        .components()
+                        .next()
+                        .map(|c| c.as_os_str() == "props")
+                        .unwrap_or(false)
                 {
                     prop_files.push(path.clone());
                 } else if rel_str == "tuning.json" {
-                    reasons.push(format!(
-                        "{rel_str}: tuning tables are v2; refused in v1"
-                    ));
+                    reasons.push(format!("{rel_str}: tuning tables are v2; refused in v1"));
                 } else {
                     reasons.push(format!("{rel_str}: unexpected JSON file in a mod folder"));
                 }
@@ -1158,10 +1212,8 @@ pub fn load_mod_folder(dir: &Path) -> Result<LoadedMod, QuarantinedMod> {
         }
     }
     // 5. Placements + replacements (against shipped + own props).
-    let own_map: BTreeMap<String, PropDef> = props
-        .iter()
-        .map(|p| (p.id.clone(), p.clone()))
-        .collect();
+    let own_map: BTreeMap<String, PropDef> =
+        props.iter().map(|p| (p.id.clone(), p.clone())).collect();
     let mut placements = Vec::new();
     let mut replacements = Vec::new();
     if let Some(path) = &placements_file {
@@ -1176,16 +1228,14 @@ pub fn load_mod_folder(dir: &Path) -> Result<LoadedMod, QuarantinedMod> {
         };
         if !text.is_empty() {
             match json::parse(&text) {
-                Ok(value) => {
-                    match parse_placements_file(&rel_str, &value, &shipped, &own_map) {
-                        Ok((pl, rep, mut warns)) => {
-                            placements = pl;
-                            replacements = rep;
-                            warnings.append(&mut warns);
-                        }
-                        Err(e) => reasons.push(e),
+                Ok(value) => match parse_placements_file(&rel_str, &value, &shipped, &own_map) {
+                    Ok((pl, rep, mut warns)) => {
+                        placements = pl;
+                        replacements = rep;
+                        warnings.append(&mut warns);
                     }
-                }
+                    Err(e) => reasons.push(e),
+                },
                 Err(e) => reasons.push(format!("{rel_str}:{e}")),
             }
         }
@@ -1257,10 +1307,7 @@ impl LoadReport {
 /// Load several mod folders against an anchor table
 /// (anchor name -> (position, yaw)). Deterministic: folder order
 /// never affects the result except through the documented tiebreak.
-pub fn load_mods(
-    dirs: &[PathBuf],
-    anchors: &BTreeMap<String, ([f32; 3], f32)>,
-) -> LoadReport {
+pub fn load_mods(dirs: &[PathBuf], anchors: &BTreeMap<String, ([f32; 3], f32)>) -> LoadReport {
     // Phase 1: single-folder loads, in folder-name order.
     let mut sorted_dirs = dirs.to_vec();
     sorted_dirs.sort();
@@ -1300,9 +1347,7 @@ pub fn load_mods(
                         newly_dead.push(i);
                         quarantined.push(QuarantinedMod {
                             folder_name: loaded[i].folder_name.clone(),
-                            reasons: vec![format!(
-                                "load_after target '{target}' is itself"
-                            )],
+                            reasons: vec![format!("load_after target '{target}' is itself")],
                         });
                         break;
                     }
@@ -1496,11 +1541,7 @@ pub fn load_mods(
                     'x' => (d * cos, -d * sin),
                     _ => (d * sin, d * cos),
                 };
-                let pos = [
-                    base_pos[0] + dx,
-                    base_pos[1],
-                    base_pos[2] + dz,
-                ];
+                let pos = [base_pos[0] + dx, base_pos[1], base_pos[2] + dz];
                 // Footprint overlap (2D, axis-aligned, yaw ignored
                 // — a documented v1 approximation): dressing-only
                 // props (no contract) never block.

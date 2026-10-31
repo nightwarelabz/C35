@@ -18,9 +18,7 @@
 //! says lit — same field, same answer, no second sense.
 
 use crate::perception::field::LightField;
-use crate::perception::mecha::{
-    CannonState, CoolantState, LocoState, SensorState, Type1Governor,
-};
+use crate::perception::mecha::{CannonState, CoolantState, LocoState, SensorState, Type1Governor};
 use glam::Vec3;
 
 /// An emitter as the sense view blooms it: position,
@@ -132,10 +130,7 @@ impl SenseView {
             } else {
                 AttentionTone::Calm
             };
-            view.tones.push(AttentionRead {
-                dir: *dir,
-                tone,
-            });
+            view.tones.push(AttentionRead { dir: *dir, tone });
         }
         for (pos, gov) in mechas {
             if (*pos - eye).length() <= Self::MECHA_RANGE {

@@ -109,11 +109,7 @@ pub fn grade(op: &OpRecord, weights: GradeWeights) -> Grade {
             op.descriptions_filed as f32,
             weights.per_description,
         ),
-        (
-            "witness_price",
-            op.witness_price,
-            weights.per_witness_price,
-        ),
+        ("witness_price", op.witness_price, weights.per_witness_price),
         ("casualties", op.casualties as f32, weights.per_casualty),
         ("time_seconds", op.elapsed_s, weights.per_second),
     ];

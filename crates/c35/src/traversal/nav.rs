@@ -118,7 +118,6 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
     // Region growing: 4-connectivity, joined only where the
     // height step is walkable — ledges split regions.
     let mut regions = 0usize;
-    let mut grid = grid;
     for j in 0..nz {
         for i in 0..nx {
             let idx = j * nx + i;
@@ -186,8 +185,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
                 for ci in i..=i1 {
                     let nidx = (j1 + 1) * nx + ci;
                     match grid[nidx].as_ref() {
-                        Some(nc)
-                            if nc.region == Some(region) && !consumed[nidx] => {}
+                        Some(nc) if nc.region == Some(region) && !consumed[nidx] => {}
                         _ => break 'outer,
                     }
                 }
@@ -253,11 +251,9 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
                 polys[b].min.z,
                 polys[b].max.z,
             );
-            let x_touch = (amax_x - bmin_x).abs() < 0.01
-                || (bmax_x - amin_x).abs() < 0.01;
+            let x_touch = (amax_x - bmin_x).abs() < 0.01 || (bmax_x - amin_x).abs() < 0.01;
             let z_overlap = amin_z < bmax_z && bmin_z < amax_z;
-            let z_touch = (amax_z - bmin_z).abs() < 0.01
-                || (bmax_z - amin_z).abs() < 0.01;
+            let z_touch = (amax_z - bmin_z).abs() < 0.01 || (bmax_z - amin_z).abs() < 0.01;
             let x_overlap = amin_x < bmax_x && bmin_x < amax_x;
             if (x_touch && z_overlap) || (z_touch && x_overlap) {
                 // Adjacency inside a region is FREE passage:
@@ -317,7 +313,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
                     nc.ground,
                     min.z + (nj as f32 + 0.5) * NAV_CELL,
                 );
-                if dh >= 0.4 && dh <= 1.5 {
+                if (0.4..=1.5).contains(&dh) {
                     // Mantle up (one-way), plus the reverse drop.
                     links.push(OffMeshLink {
                         from: p0,
@@ -383,7 +379,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
             let key = (polys[a].region, polys[b].region);
             let better = best_grapple
                 .get(&key)
-                .map_or(true, |old| link.price < old.price);
+                .is_none_or(|old| link.price < old.price);
             if better {
                 best_grapple.insert(key, link);
             }
@@ -403,17 +399,11 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
                 let x = min.x + (i as f32 + 0.5) * NAV_CELL;
                 let z = min.z + (j as f32 + 0.5) * NAV_CELL;
                 let probe = Vec3::new(x, cell.ground + 1.0, z);
-                for dir in [
-                    Vec3::X,
-                    -Vec3::X,
-                    Vec3::Z,
-                    -Vec3::Z,
-                ] {
+                for dir in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z] {
                     if let Some(hit) = world.raycast(probe, dir, 0.95) {
                         // Wall normals are horizontal here.
                         if hit.normal.y.abs() < 0.42 {
-                            wall_at[j * nx + i] =
-                                Some((dir, hit.normal, cell.ground));
+                            wall_at[j * nx + i] = Some((dir, hit.normal, cell.ground));
                             break;
                         }
                     }
@@ -425,9 +415,9 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
             let mut run_start: Option<usize> = None;
             let mut run_normal: Option<Vec3> = None;
             let flush = |run_start: &mut Option<usize>,
-                             run_normal: &mut Option<Vec3>,
-                             end: usize,
-                             links: &mut Vec<OffMeshLink>| {
+                         run_normal: &mut Option<Vec3>,
+                         end: usize,
+                         links: &mut Vec<OffMeshLink>| {
                 if let (Some(s), Some(n)) = (*run_start, *run_normal) {
                     if end - s >= 3 {
                         let p0 = Vec3::new(
@@ -457,7 +447,7 @@ pub fn bake(world: &StaticWorld, min: Vec3, max: Vec3) -> NavMesh {
             for i in 0..nx {
                 match wall_at[j * nx + i] {
                     Some((_, n, _)) => {
-                        if run_normal.map_or(true, |rn| (rn - n).length() < 0.1) {
+                        if run_normal.is_none_or(|rn| (rn - n).length() < 0.1) {
                             if run_start.is_none() {
                                 run_start = Some(i);
                                 run_normal = Some(n);
@@ -535,18 +525,24 @@ pub struct Route {
     pub stimulus: f32,
 }
 
+/// One poly's outgoing edges: (to, cost, kind, from, to, stimulus).
+type EdgeList = Vec<(usize, f32, LinkKind, Vec3, Vec3, f32)>;
+
 pub fn route(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Route> {
     let start = nearest_poly(mesh, from)?;
     let goal = nearest_poly(mesh, to)?;
     // Edges: poly adjacency + links attached to their nearest polys.
-    let mut edges: HashMap<usize, Vec<(usize, f32, LinkKind, Vec3, Vec3, f32)>> =
-        HashMap::new();
+    let mut edges: HashMap<usize, EdgeList> = HashMap::new();
     for poly in &mesh.polys {
         for (n, cost) in &poly.neighbors {
-            edges
-                .entry(poly.id)
-                .or_default()
-                .push((*n, *cost, LinkKind::Walk, poly.center, mesh.polys[*n].center, 0.0));
+            edges.entry(poly.id).or_default().push((
+                *n,
+                *cost,
+                LinkKind::Walk,
+                poly.center,
+                mesh.polys[*n].center,
+                0.0,
+            ));
         }
     }
     for l in &mesh.links {

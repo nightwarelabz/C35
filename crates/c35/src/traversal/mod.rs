@@ -28,9 +28,7 @@ pub mod wallrun;
 
 use crate::operator::PoseFrame;
 use crate::traversal::events::{EventLog, StimulusKind};
-use crate::traversal::physics::{
-    move_body, Body, Mantle, StaticWorld, FIXED_DT, GRAVITY,
-};
+use crate::traversal::physics::{move_body, Body, Mantle, StaticWorld, FIXED_DT, GRAVITY};
 use crate::traversal::poses::{traversal_pose, TravPose};
 use crate::traversal::rope::{Grapple, HookInput};
 use crate::traversal::wallrun::{WallRun, WallSide};
@@ -154,7 +152,7 @@ impl TravSim {
             .events
             .events
             .last()
-            .map_or(false, |e| e.tick == self.tick && e.kind == StimulusKind::Landing);
+            .is_some_and(|e| e.tick == self.tick && e.kind == StimulusKind::Landing);
         if landed {
             self.land_ticks = 30;
         } else if self.land_ticks > 0 {
@@ -190,13 +188,8 @@ impl TravSim {
                     self.mantle = None;
                     self.mode = BodyMode::Ground;
                     if let Some(g) = world.ground_at(to.x, to.z) {
-                        self.events.push(
-                            tick,
-                            StimulusKind::Mantle,
-                            to,
-                            g.surface,
-                            0.8,
-                        );
+                        self.events
+                            .push(tick, StimulusKind::Mantle, to, g.surface, 0.8);
                     }
                     // Fall through to normal movement below.
                 }
@@ -255,8 +248,7 @@ impl TravSim {
                 // Ground settle while latched (standing on the
                 // ground with a slack rope is still standing).
                 if self.body.vel.y <= 0.0 {
-                    if let Some(g) = world.ground_at(self.body.feet.x, self.body.feet.z)
-                    {
+                    if let Some(g) = world.ground_at(self.body.feet.x, self.body.feet.z) {
                         if (self.body.feet.y - g.height).abs() <= 0.05 {
                             self.body.feet.y = g.height;
                             self.body.vel.y = 0.0;
@@ -304,13 +296,7 @@ impl TravSim {
                 self.mode = BodyMode::Air;
                 self.pose_blend = 0.0;
             } else {
-                let held = w.update(
-                    dt,
-                    &mut self.body,
-                    world,
-                    &mut self.events,
-                    tick,
-                );
+                let held = w.update(dt, &mut self.body, world, &mut self.events, tick);
                 if held {
                     self.mode = BodyMode::WallRun;
                     self.pose_blend = 1.0;

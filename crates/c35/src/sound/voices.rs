@@ -12,8 +12,8 @@
 //! Playback never judges; it only makes audible.
 
 use crate::sound::synth::{
-    attack, decay_exp, release_gate, CompositeVoice, DropOsc, Lowpass, NoiseBurst, Ring,
-    Rng, Saw, Sine, Thump, VoiceGen,
+    attack, decay_exp, release_gate, CompositeVoice, DropOsc, Lowpass, NoiseBurst, Ring, Rng, Saw,
+    Sine, Thump, VoiceGen,
 };
 use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
 
@@ -21,11 +21,7 @@ use crate::traversal::surface::{SurfaceKind, SurfaceRecord};
 /// surface's own ring. Metal rings long, stone cracks
 /// short, wood knocks — the surface speaks, not a
 /// generic "hit" sample.
-pub fn strike_voice(
-    surface: SurfaceRecord,
-    seed: u64,
-    sample_rate: f32,
-) -> Box<dyn VoiceGen> {
+pub fn strike_voice(surface: SurfaceRecord, seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
     let (ring_base, ring_dur, ring_tau): (f32, f32, f32) = match surface.kind {
         SurfaceKind::Metal => (320.0, 0.5, 0.15),
         SurfaceKind::Stone | SurfaceKind::Brick => (200.0, 0.2, 0.06),
@@ -34,7 +30,14 @@ pub fn strike_voice(
     };
     Box::new(CompositeVoice::new(vec![
         (
-            Box::new(NoiseBurst::new(seed, 5000.0, 0.05, 0.001, 0.015, sample_rate)),
+            Box::new(NoiseBurst::new(
+                seed,
+                5000.0,
+                0.05,
+                0.001,
+                0.015,
+                sample_rate,
+            )),
             0.9,
         ),
         (
@@ -74,7 +77,14 @@ pub fn mantle_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
             0.8,
         ),
         (
-            Box::new(NoiseBurst::new(seed, 1200.0, 0.15, 0.005, 0.05, sample_rate)),
+            Box::new(NoiseBurst::new(
+                seed,
+                1200.0,
+                0.15,
+                0.005,
+                0.05,
+                sample_rate,
+            )),
             0.4,
         ),
     ]))
@@ -96,7 +106,14 @@ pub fn sever_ring_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
 /// A seam crossing: a soft tick, quiet by design — the seam
 /// is felt more than heard.
 pub fn seam_tick_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
-    Box::new(NoiseBurst::new(seed, 2000.0, 0.05, 0.001, 0.02, sample_rate))
+    Box::new(NoiseBurst::new(
+        seed,
+        2000.0,
+        0.05,
+        0.001,
+        0.02,
+        sample_rate,
+    ))
 }
 
 /// A strike that failed to bite: a dull empty snap, no ring.
@@ -108,7 +125,14 @@ pub fn strike_fail_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
             0.6,
         ),
         (
-            Box::new(NoiseBurst::new(seed, 1500.0, 0.04, 0.001, 0.015, sample_rate)),
+            Box::new(NoiseBurst::new(
+                seed,
+                1500.0,
+                0.04,
+                0.001,
+                0.015,
+                sample_rate,
+            )),
             0.3,
         ),
     ]))
@@ -118,7 +142,14 @@ pub fn strike_fail_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
 pub fn grapple_launch_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
     Box::new(CompositeVoice::new(vec![
         (
-            Box::new(NoiseBurst::new(seed, 6000.0, 0.04, 0.001, 0.012, sample_rate)),
+            Box::new(NoiseBurst::new(
+                seed,
+                6000.0,
+                0.04,
+                0.001,
+                0.012,
+                sample_rate,
+            )),
             1.0,
         ),
         (
@@ -171,8 +202,7 @@ impl VoiceGen for ReelChunk {
         } else {
             0.0
         };
-        let s = self.click.next() * click_env * 0.5
-            + self.rng.next_bipolar() * click_env * 0.3;
+        let s = self.click.next() * click_env * 0.5 + self.rng.next_bipolar() * click_env * 0.3;
         self.click_t += 1.0 / self.sample_rate;
         self.t += 1.0 / self.sample_rate;
         Some(s)
@@ -187,7 +217,14 @@ pub fn grapple_reel_chunk(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
 pub fn grapple_detach_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
     Box::new(CompositeVoice::new(vec![
         (
-            Box::new(NoiseBurst::new(seed, 5000.0, 0.06, 0.001, 0.02, sample_rate)),
+            Box::new(NoiseBurst::new(
+                seed,
+                5000.0,
+                0.06,
+                0.001,
+                0.02,
+                sample_rate,
+            )),
             0.9,
         ),
         (
@@ -393,8 +430,7 @@ impl VoiceGen for Churr {
         // Rapid amplitude chopping at 17 Hz: the churr.
         let am = 0.25 + 0.75 * (0.5 + 0.5 * (self.t * 2.0 * std::f32::consts::PI * 17.0).sin());
         let env = attack(self.t, 0.3) * release_gate(self.t, self.dur, 0.5);
-        let s = self.carrier.next() * am * env * 0.6
-            + self.rng.next_bipolar() * 0.06 * env;
+        let s = self.carrier.next() * am * env * 0.6 + self.rng.next_bipolar() * 0.06 * env;
         self.t += 1.0 / self.sample_rate;
         Some(s)
     }
@@ -443,7 +479,7 @@ impl VoiceGen for ReportMurmur {
         let mut s = 0.0f32;
         for (bt, bf) in self.blips.iter() {
             let dt = self.t - bt;
-            if dt >= 0.0 && dt < 0.10 {
+            if (0.0..0.10).contains(&dt) {
                 self.osc.freq = *bf;
                 s += self.osc.next() * decay_exp(dt, 0.03) * 0.5;
             }
@@ -473,13 +509,7 @@ const VISOR_C6: f32 = 1046.50;
 /// sine fundamental plus 2nd and 3rd harmonics under a fast
 /// attack and an exponential decay, gated so notes never
 /// bleed into each other.
-fn visor_note(
-    dt: f32,
-    freq: f32,
-    gate: f32,
-    tau: f32,
-    amps: (f32, f32, f32),
-) -> f32 {
+fn visor_note(dt: f32, freq: f32, gate: f32, tau: f32, amps: (f32, f32, f32)) -> f32 {
     if dt < 0.0 || dt >= gate {
         return 0.0;
     }
@@ -553,28 +583,22 @@ impl VoiceGen for VisorPowerOn {
             };
             if tt < 0.85 {
                 let ramp = (tt / 0.8 + 0.2).min(1.0);
-                let tri =
-                    2.0 * (2.0 * self.sweep_phase.fract() - 1.0).abs() - 1.0;
+                let tri = 2.0 * (2.0 * self.sweep_phase.fract() - 1.0).abs() - 1.0;
                 s += tri * attack(tt, 0.05) * decay_exp(tt, 10.0) * ramp * 0.16;
-                s += (self.sub_phase * 2.0 * std::f32::consts::PI).sin()
-                    * ramp
-                    * 0.10;
+                s += (self.sub_phase * 2.0 * std::f32::consts::PI).sin() * ramp * 0.10;
                 let hiss_env = (tt * 3.0).min(1.0);
                 s += self.hiss.process(self.rng.next_bipolar()) * hiss_env * 0.05;
             } else {
                 let st = tt - 0.85;
-                let trem =
-                    0.85 + 0.15 * (st * 2.0 * std::f32::consts::PI * 28.0).sin();
+                let trem = 0.85 + 0.15 * (st * 2.0 * std::f32::consts::PI * 28.0).sin();
                 s += (self.sweep_phase * 2.0 * std::f32::consts::PI).sin()
                     * trem
                     * attack(st, 0.01)
                     * decay_exp(st, 0.09)
                     * 0.07;
             }
-            self.sweep_phase =
-                (self.sweep_phase + freq / self.sample_rate) % 1.0;
-            self.sub_phase =
-                (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
+            self.sweep_phase = (self.sweep_phase + freq / self.sample_rate) % 1.0;
+            self.sub_phase = (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
         }
         // 4. The motif: C5 at 1.05, G5 at 1.19, C6 at 1.33.
         s += visor_note(t - 1.05, VISOR_C5, 0.16, 0.055, (0.30, 0.12, 0.05));
@@ -652,10 +676,8 @@ impl VoiceGen for VisorPowerOff {
                 * 0.07;
             let hiss_env = (tt * 10.0).min(1.0) * (1.0 - k);
             s += self.hiss.process(self.rng.next_bipolar()) * hiss_env * 0.04;
-            self.sweep_phase =
-                (self.sweep_phase + freq / self.sample_rate) % 1.0;
-            self.sub_phase =
-                (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
+            self.sweep_phase = (self.sweep_phase + freq / self.sample_rate) % 1.0;
+            self.sub_phase = (self.sub_phase + freq / (2.0 * self.sample_rate)) % 1.0;
         }
         // Relay release click at 0.78.
         let dt = t - 0.78;
@@ -707,9 +729,7 @@ impl VoiceGen for VisorTag {
         for (t0, freq) in [(0.0, VISOR_G5), (0.09, VISOR_C6)] {
             let dt = t - t0;
             if (0.0..0.09).contains(&dt) {
-                let e = attack(dt, 0.004)
-                    * decay_exp(dt, 0.030)
-                    * release_gate(dt, 0.09, 0.01);
+                let e = attack(dt, 0.004) * decay_exp(dt, 0.030) * release_gate(dt, 0.09, 0.01);
                 let p = 2.0 * std::f32::consts::PI * freq * dt;
                 s += e * (0.16 * p.sin() + 0.05 * (2.0 * p).sin());
             }
@@ -728,10 +748,7 @@ pub fn visor_tag_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
 /// rumble at 38 Hz plus lowpassed noise, 1.2 seconds.
 pub fn tremor_voice(seed: u64, sample_rate: f32) -> Box<dyn VoiceGen> {
     Box::new(CompositeVoice::new(vec![
-        (
-            Box::new(Thump::new(45.0, 38.0, 0.4, 1.2, sample_rate)),
-            0.7,
-        ),
+        (Box::new(Thump::new(45.0, 38.0, 0.4, 1.2, sample_rate)), 0.7),
         (
             Box::new(NoiseBurst::new(seed, 120.0, 1.2, 0.2, 0.4, sample_rate)),
             0.4,

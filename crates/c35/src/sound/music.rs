@@ -174,8 +174,8 @@ impl MusicBed {
     pub fn current_mix(&self) -> [f32; 4] {
         let k = (self.fade_t / Self::FADE_SECONDS).min(1.0);
         let mut out = [0.0; 4];
-        for i in 0..4 {
-            out[i] = self.from[i] + (self.to[i] - self.from[i]) * k;
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = self.from[i] + (self.to[i] - self.from[i]) * k;
         }
         out
     }

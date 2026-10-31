@@ -44,7 +44,10 @@ fn main() {
             let ang = to_c.normalize().dot(fwd).acos().to_degrees();
             println!(
                 "  tile {i:2}: center {:?} r {:.1} dist {:.0} ang {:.1} deg",
-                t.center, t.radius, to_c.length(), ang
+                t.center,
+                t.radius,
+                to_c.length(),
+                ang
             );
         }
     }

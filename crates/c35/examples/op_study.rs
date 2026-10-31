@@ -18,7 +18,7 @@
 
 use c35::glam::Vec3;
 use c35::operator::{build_operator, OperatorPose, OPERATOR_SPOT, OPERATOR_YAW_DEG};
-use c35::scene::{CameraPose, height_at};
+use c35::scene::{height_at, CameraPose};
 use c35::world::{days_from_civil, world_state, Observer, WorldState};
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -47,7 +47,11 @@ fn crc32(data: &[u8]) -> u32 {
     for (i, e) in table.iter_mut().enumerate() {
         let mut c = i as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         *e = c;
     }
@@ -119,9 +123,12 @@ fn save_png(renderer: &c35::Renderer, tex: &c35::wgpu::Texture, w: u32, h: u32, 
         usage: c35::wgpu::BufferUsages::MAP_READ | c35::wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut encoder = renderer.device.create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
-        label: Some("study copy"),
-    });
+    let mut encoder =
+        renderer
+            .device
+            .create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
+                label: Some("study copy"),
+            });
     encoder.copy_texture_to_buffer(
         c35::wgpu::TexelCopyTextureInfo {
             texture: tex,
@@ -137,11 +144,18 @@ fn save_png(renderer: &c35::Renderer, tex: &c35::wgpu::Texture, w: u32, h: u32, 
                 rows_per_image: Some(h),
             },
         },
-        c35::wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        c35::wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
     );
     renderer.queue.submit([encoder.finish()]);
     buf.slice(..).map_async(c35::wgpu::MapMode::Read, |_| {});
-    let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+    let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
     let range = buf.slice(..).get_mapped_range();
     let mut pixels = Vec::with_capacity((w * h * 4) as usize);
     for row in 0..h as usize {
@@ -197,16 +211,22 @@ fn main() {
     );
     renderer.update_operator(&mesh);
 
-    let out_tex = renderer.device.create_texture(&c35::wgpu::TextureDescriptor {
-        label: Some("study output"),
-        size: c35::wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: c35::wgpu::TextureDimension::D2,
-        format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
+    let out_tex = renderer
+        .device
+        .create_texture(&c35::wgpu::TextureDescriptor {
+            label: Some("study output"),
+            size: c35::wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: c35::wgpu::TextureDimension::D2,
+            format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
     let out_view = out_tex.create_view(&Default::default());
 
     // Study cameras, built from the operator's own frame: fwd is
@@ -217,14 +237,30 @@ fn main() {
     let left = Vec3::new(fwd.z, 0.0, -fwd.x);
     let base = Vec3::new(OPERATOR_SPOT.0, ground, OPERATOR_SPOT.1);
     let target = base + Vec3::new(0.0, 1.12, 0.0);
-    let cam = |off: Vec3| CameraPose { eye: base + off, target, fov_y_deg: 50.0 };
+    let cam = |off: Vec3| CameraPose {
+        eye: base + off,
+        target,
+        fov_y_deg: 50.0,
+    };
     let views: Vec<(&str, CameraPose)> = vec![
         // The primary angle: behind him, off his left shoulder —
         // pack, whips, pouches, slung gun.
-        ("rear3q-close", cam(-fwd * 3.1 + left * 1.5 + Vec3::new(0.0, 1.55, 0.0))),
-        ("rear3q-far", cam(-fwd * 19.4 + left * 4.5 + Vec3::new(0.0, 2.2, 0.0))),
-        ("front-close", cam(fwd * 3.1 - left * 1.3 + Vec3::new(0.0, 1.5, 0.0))),
-        ("front-far", cam(fwd * 19.4 - left * 5.0 + Vec3::new(0.0, 2.2, 0.0))),
+        (
+            "rear3q-close",
+            cam(-fwd * 3.1 + left * 1.5 + Vec3::new(0.0, 1.55, 0.0)),
+        ),
+        (
+            "rear3q-far",
+            cam(-fwd * 19.4 + left * 4.5 + Vec3::new(0.0, 2.2, 0.0)),
+        ),
+        (
+            "front-close",
+            cam(fwd * 3.1 - left * 1.3 + Vec3::new(0.0, 1.5, 0.0)),
+        ),
+        (
+            "front-far",
+            cam(fwd * 19.4 - left * 5.0 + Vec3::new(0.0, 2.2, 0.0)),
+        ),
         ("side-close", cam(left * 3.4 + Vec3::new(0.0, 1.35, 0.0))),
         ("side-far", cam(left * 19.8 + Vec3::new(0.0, 2.0, 0.0))),
     ];
@@ -232,7 +268,10 @@ fn main() {
     for (name, pose_cam) in &views {
         for _ in 0..12 {
             renderer.render(&out_view, pose_cam, &world, 0.0);
-            let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+            let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
         }
         save_png(
             &renderer,
@@ -246,7 +285,10 @@ fn main() {
     let (iw, ih) = renderer.internal_size();
     println!("=== OP STUDY LEDGER ({present}) ===");
     println!("backend          : {}", renderer.backend_name());
-    println!("output           : {}x{} (internal {}x{})", width, height, iw, ih);
+    println!(
+        "output           : {}x{} (internal {}x{})",
+        width, height, iw, ih
+    );
     println!("presentation     : {}", renderer.present_description());
     println!("draw calls/frame : {}", renderer.draw_calls_per_frame());
     println!("triangles/frame  : {}", renderer.triangles_per_frame());

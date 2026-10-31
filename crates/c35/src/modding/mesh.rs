@@ -128,8 +128,8 @@ fn local_polys(part: &Part) -> Vec<Poly> {
                 top.push(rim_top[i]);
             }
             let mut bot: Poly = vec![[0.0, -hy, 0.0]];
-            for i in 0..n {
-                bot.push(rim_bot[i]);
+            for v in rim_bot.iter().take(n) {
+                bot.push(*v);
             }
             polys.push(top);
             polys.push(bot);

@@ -127,12 +127,7 @@ impl DebriefRecord {
         }
         for o in &self.objectives {
             lines.push((
-                format!(
-                    "objective {} ({}): {}",
-                    o.id,
-                    o.label,
-                    state_word(o.state)
-                ),
+                format!("objective {} ({}): {}", o.id, o.label, state_word(o.state)),
                 vec![tag("objective"), tag(state_word(o.state))],
             ));
         }

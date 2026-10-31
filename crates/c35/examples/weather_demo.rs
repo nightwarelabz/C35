@@ -30,7 +30,9 @@ fn main() {
         let day = 100 + (step / 144) as u32;
         let hour_of_day = (step % 144) as f32 / 6.0;
         // Noon = 1.0 daylight, midnight = 0.0.
-        let daylight = ((hour_of_day - 6.0) / 12.0 * std::f32::consts::PI).sin().max(0.0);
+        let daylight = ((hour_of_day - 6.0) / 12.0 * std::f32::consts::PI)
+            .sin()
+            .max(0.0);
         // Cool nights, mild days.
         let cold = 0.3 + 0.2 * (1.0 - daylight);
         weather.tick(600.0, hours, day, daylight, cold);
@@ -79,7 +81,10 @@ fn main() {
     }
     println!();
     println!("48 h summary: wetness peaked at {wet_peak:.2}, {total_strikes} strikes,");
-    println!("largest 10-min wind turn {max_turn:.3} rad ({:.1} deg).", max_turn.to_degrees());
+    println!(
+        "largest 10-min wind turn {max_turn:.3} rad ({:.1} deg).",
+        max_turn.to_degrees()
+    );
     println!("Reads: rain lifts wetness, dry hours pull it back down,");
     println!("wind wanders instead of jumping, storms — and only storms — strike.");
 }

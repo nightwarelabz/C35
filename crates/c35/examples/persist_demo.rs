@@ -104,10 +104,7 @@ fn main() {
         next.archive.len() - archive_before
     );
     println!("  new agent_no      : {}", new_no);
-    println!(
-        "  city seed carried : {}",
-        next.world.seed == seed_before
-    );
+    println!("  city seed carried : {}", next.world.seed == seed_before);
     println!(
         "  entities carried  : {}",
         next.entities.len() == entities_before
@@ -128,8 +125,5 @@ fn main() {
     // The boundary result itself saves and loads clean.
     let next_bytes = next.save();
     let next_loaded = Snapshot::load(&next_bytes).expect("boundary save must load");
-    println!(
-        "boundary save loads : {}",
-        next_loaded == next
-    );
+    println!("boundary save loads : {}", next_loaded == next);
 }

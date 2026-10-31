@@ -353,9 +353,8 @@ impl Animator {
         // the identity stride × cadence == speed, integrated. The
         // slide freezes the cycle: a sliding man is not stepping.
         if slide < 0.5 {
-            self.phase =
-                (self.phase + std::f32::consts::PI * cadence(speed, step) * dt)
-                    % std::f32::consts::TAU;
+            self.phase = (self.phase + std::f32::consts::PI * cadence(speed, step) * dt)
+                % std::f32::consts::TAU;
         }
         let phase = self.phase;
         let gait_mix = smoothstep(0.08, 0.65, speed);
@@ -453,9 +452,7 @@ impl Animator {
                 leg.plant = clamp_reach(Vec3::new(p.x, leg.plant_ground + ANKLE_HEIGHT, p.z));
             }
             leg.contact = in_contact;
-            let target = if in_contact {
-                leg.plant
-            } else if slide >= 0.5 {
+            let target = if in_contact || slide >= 0.5 {
                 leg.plant
             } else {
                 // Swing: the ankle rides a phase-relative trajectory
@@ -483,9 +480,7 @@ impl Animator {
                     );
                 clamp_reach(Vec3::new(
                     p.x,
-                    ground(p.x, p.z)
-                        + ANKLE_HEIGHT
-                        + clearance * (std::f32::consts::PI * u).sin(),
+                    ground(p.x, p.z) + ANKLE_HEIGHT + clearance * (std::f32::consts::PI * u).sin(),
                     p.z,
                 ))
             };
@@ -496,7 +491,11 @@ impl Animator {
         if slide > 0.001 {
             let mk = |fwd_d: f32, lat: f32, lift: f32| -> Vec3 {
                 let p = input.pos
-                    + Vec3::new(fwd.x * fwd_d + left_dir.x * lat, 0.0, fwd.y * fwd_d + left_dir.y * lat);
+                    + Vec3::new(
+                        fwd.x * fwd_d + left_dir.x * lat,
+                        0.0,
+                        fwd.y * fwd_d + left_dir.y * lat,
+                    );
                 clamp_reach(Vec3::new(p.x, ground(p.x, p.z) + ANKLE_HEIGHT + lift, p.z))
             };
             let lead_t = mk(0.66, HIP_HALF, 0.0);
@@ -515,10 +514,17 @@ impl Animator {
         let lean = (1.2 + 1.35 * speed).min(9.0) * gait_mix + 5.0 * crouch - 13.0 * slide;
         let sway = 2.2 * gait_mix * (1.0 - 0.6 * crouch);
         let counter = (3.0 + 0.6 * speed).min(6.5) * gait_mix;
-        frame.add(Bone::Pelvis, Vec3::new(lean * 0.55, counter * phase.sin(), -sway * phase.cos()));
+        frame.add(
+            Bone::Pelvis,
+            Vec3::new(lean * 0.55, counter * phase.sin(), -sway * phase.cos()),
+        );
         frame.add(
             Bone::Torso,
-            Vec3::new(lean * 0.45 + 10.0 * crouch - 8.0 * slide, -counter * 0.8 * phase.sin(), sway * 0.35 * phase.cos()),
+            Vec3::new(
+                lean * 0.45 + 10.0 * crouch - 8.0 * slide,
+                -counter * 0.8 * phase.sin(),
+                sway * 0.35 * phase.cos(),
+            ),
         );
         frame.add(Bone::Head, Vec3::new(-lean * 0.62, 0.0, 0.0));
 
@@ -538,8 +544,14 @@ impl Animator {
             let swing_r = amp * phase.cos();
             frame.add(Bone::UpperArmL, Vec3::new(swing_l - 8.0, 0.0, 4.0));
             frame.add(Bone::UpperArmR, Vec3::new(swing_r - 8.0, 0.0, -4.0));
-            frame.add(Bone::ForearmL, Vec3::new(-6.0 - 7.0 * (1.0 + phase.cos()) * 0.5 * gait_mix, 0.0, 0.0));
-            frame.add(Bone::ForearmR, Vec3::new(-6.0 - 7.0 * (1.0 - phase.cos()) * 0.5 * gait_mix, 0.0, 0.0));
+            frame.add(
+                Bone::ForearmL,
+                Vec3::new(-6.0 - 7.0 * (1.0 + phase.cos()) * 0.5 * gait_mix, 0.0, 0.0),
+            );
+            frame.add(
+                Bone::ForearmR,
+                Vec3::new(-6.0 - 7.0 * (1.0 - phase.cos()) * 0.5 * gait_mix, 0.0, 0.0),
+            );
             frame.add(Bone::HandL, Vec3::new(4.0, 0.0, 0.0));
             frame.add(Bone::HandR, Vec3::new(4.0, 0.0, 0.0));
         }
@@ -615,8 +627,7 @@ impl Animator {
                     desired += std::f32::consts::PI;
                 }
                 let cur = self.leg_yaw[i];
-                let delta = (desired - cur + std::f32::consts::PI * 3.0)
-                    % std::f32::consts::TAU
+                let delta = (desired - cur + std::f32::consts::PI * 3.0) % std::f32::consts::TAU
                     - std::f32::consts::PI;
                 self.leg_yaw[i] = cur + delta.clamp(-12.0 * dt, 12.0 * dt);
                 let solved = solve_leg(hip, local, self.leg_yaw[i]);
@@ -669,10 +680,11 @@ fn solve_leg(hip: Vec3, ankle: Vec3, leg_yaw: f32) -> (Vec3, Vec3, Vec3) {
     // is a legitimate target, solved as a lunge, not clamped into
     // nonsense.
     let down = -rel.y;
-    let d = (plane * plane + down * down).sqrt().clamp(0.05, (THIGH_LEN + SHIN_LEN) * 0.999);
+    let d = (plane * plane + down * down)
+        .sqrt()
+        .clamp(0.05, (THIGH_LEN + SHIN_LEN) * 0.999);
     let ang = plane.atan2(down);
-    let cos_beta = ((THIGH_LEN * THIGH_LEN + d * d - SHIN_LEN * SHIN_LEN)
-        / (2.0 * THIGH_LEN * d))
+    let cos_beta = ((THIGH_LEN * THIGH_LEN + d * d - SHIN_LEN * SHIN_LEN) / (2.0 * THIGH_LEN * d))
         .clamp(-1.0, 1.0);
     let beta = cos_beta.acos();
     // Two circle intersections solve the same ankle; the knee is
@@ -700,11 +712,7 @@ fn solve_leg(hip: Vec3, ankle: Vec3, leg_yaw: f32) -> (Vec3, Vec3, Vec3) {
     let shin = Vec3::new((thigh_tilt - shin_tilt).to_degrees(), 0.0, 0.0);
     // Foot: level sole (its x cancels the chain's), yawed back to
     // the figure's forward so a yawed leg doesn't toe the boot out.
-    let foot = Vec3::new(
-        -(thigh.x + shin.x),
-        -leg_yaw.to_degrees(),
-        0.0,
-    );
+    let foot = Vec3::new(-(thigh.x + shin.x), -leg_yaw.to_degrees(), 0.0);
     (thigh, shin, foot)
 }
 
@@ -900,8 +908,7 @@ impl Controller {
                 if !next.slide {
                     let nv = next.gait.target_speed();
                     if nv < target {
-                        let allow =
-                            (nv * nv + 2.0 * BRAKE_DECEL * (dist - 0.6).max(0.0)).sqrt();
+                        let allow = (nv * nv + 2.0 * BRAKE_DECEL * (dist - 0.6).max(0.0)).sqrt();
                         target = target.min(allow);
                     }
                 }
@@ -949,7 +956,11 @@ impl Controller {
             } else {
                 0.0
             },
-            aim: if a.done { 0.0 } else { leg.map(|l| l.aim).unwrap_or(0.0) },
+            aim: if a.done {
+                0.0
+            } else {
+                leg.map(|l| l.aim).unwrap_or(0.0)
+            },
             slide: if a.sliding { 1.0 } else { 0.0 },
             carry: true,
         }
@@ -966,7 +977,10 @@ impl Controller {
 /// island's south tail and east shore are water.
 pub fn proof_script(name: &str) -> Option<(Vec2, Vec<ScriptLeg>)> {
     use Gait::*;
-    let start = Vec2::new(crate::operator::OPERATOR_SPOT.0, crate::operator::OPERATOR_SPOT.1);
+    let start = Vec2::new(
+        crate::operator::OPERATOR_SPOT.0,
+        crate::operator::OPERATOR_SPOT.1,
+    );
     let legs = match name {
         // The full drive: a closed loop — beach south at a run,
         // crouch at the water's edge, back north, the shelf at a

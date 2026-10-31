@@ -21,12 +21,22 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Rect {
-        Rect { x, y, w: w.max(0.0), h: h.max(0.0) }
+        Rect {
+            x,
+            y,
+            w: w.max(0.0),
+            h: h.max(0.0),
+        }
     }
 
     /// Inset by `pad` on every side (negative pad grows).
     pub fn inset(&self, pad: f32) -> Rect {
-        Rect::new(self.x + pad, self.y + pad, self.w - 2.0 * pad, self.h - 2.0 * pad)
+        Rect::new(
+            self.x + pad,
+            self.y + pad,
+            self.w - 2.0 * pad,
+            self.h - 2.0 * pad,
+        )
     }
 
     /// Shrink to a child box of `size`, placed by `anchor`

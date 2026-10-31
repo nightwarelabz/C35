@@ -129,11 +129,7 @@ impl Conversation {
         };
         let id = self.lines[idx].id.clone();
         self.visited.push(id.clone());
-        if let Some((_, count)) = self
-            .visit_counts
-            .iter_mut()
-            .find(|(seen, _)| seen == &id)
-        {
+        if let Some((_, count)) = self.visit_counts.iter_mut().find(|(seen, _)| seen == &id) {
             *count += 1;
         } else {
             self.visit_counts.push((id, 1));

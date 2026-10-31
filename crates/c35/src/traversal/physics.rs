@@ -105,7 +105,7 @@ impl StaticWorld {
         for b in &self.boxes {
             if x >= b.min.x && x <= b.max.x && z >= b.min.z && z <= b.max.z {
                 let h = b.top();
-                if best.map_or(true, |g| h > g.height) {
+                if best.is_none_or(|g| h > g.height) {
                     best = Some(GroundSample {
                         height: h,
                         surface: b.surface,
@@ -165,7 +165,7 @@ impl StaticWorld {
                     surface: b.surface,
                     dist: tmin,
                 };
-                if best.map_or(true, |h| hit.dist < h.dist) {
+                if best.is_none_or(|h| hit.dist < h.dist) {
                     best = Some(hit);
                 }
             }
@@ -327,6 +327,7 @@ impl Body {
 /// One fixed-step ground/air move. `wish` is a horizontal unit
 /// direction (or zero), `speed` the target ground speed, `jump`
 /// the jump intent this tick. Landing events carry impact speed.
+#[allow(clippy::too_many_arguments)]
 pub fn move_body(
     body: &mut Body,
     wish: Vec3,
@@ -372,7 +373,7 @@ pub fn move_body(
     let was_falling = !was_grounded && body.vel.y < 0.0;
     if let Some(g) = world.ground_at(body.feet.x, body.feet.z) {
         let over = body.feet.y - g.height;
-        if body.vel.y <= 0.0 && over <= 0.02 && over >= -STEP_HEIGHT {
+        if body.vel.y <= 0.0 && (-STEP_HEIGHT..=0.02).contains(&over) {
             if was_falling {
                 let impact = -body.vel.y;
                 body.last_impact = impact;

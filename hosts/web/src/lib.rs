@@ -97,8 +97,7 @@ fn request_geolocation(geo: Rc<RefCell<Geo>>) {
     let geo_ok = geo.clone();
     let on_ok = Closure::once(move |pos: web_sys::Position| {
         let coords = pos.coords();
-        *geo_ok.borrow_mut() =
-            Geo::Granted(coords.latitude() as f32, coords.longitude() as f32);
+        *geo_ok.borrow_mut() = Geo::Granted(coords.latitude() as f32, coords.longitude() as f32);
         set_text("location", &geo_ok.borrow().describe());
     });
     let geo_err = geo.clone();
@@ -170,14 +169,8 @@ async fn run() {
     let surface = instance
         .create_surface(c35::wgpu::SurfaceTarget::Canvas(canvas))
         .expect("create surface");
-    let mut renderer = c35::Renderer::new_for_surface(
-        &instance,
-        &surface,
-        WIDTH,
-        HEIGHT,
-        render_scale,
-    )
-    .await;
+    let mut renderer =
+        c35::Renderer::new_for_surface(&instance, &surface, WIDTH, HEIGHT, render_scale).await;
     surface.configure(
         &renderer.device,
         &c35::wgpu::SurfaceConfiguration {
@@ -249,7 +242,8 @@ async fn run() {
                 let deltas: Vec<f64> = st.deltas.iter().map(|d| *d as f64).collect();
                 let (shadow_samples, scene_samples) = renderer.drain_gpu_samples();
                 let gpu_scene = if scene_samples.is_empty() {
-                    "gpu scene pass   : n/a (timestamp queries not exposed by this backend)".to_string()
+                    "gpu scene pass   : n/a (timestamp queries not exposed by this backend)"
+                        .to_string()
                 } else {
                     format!(
                         "gpu scene pass   : mean {:.2} ms [wgpu timestamp queries]",
@@ -270,7 +264,8 @@ async fn run() {
                         )
                     }
                 } else {
-                    "shadow pass      : skipped — sun below horizon (shadows are sun-only)".to_string()
+                    "shadow pass      : skipped — sun below horizon (shadows are sun-only)"
+                        .to_string()
                 };
                 let solar_src = match geo_now {
                     Geo::Granted(_, _) => "longitude (geolocation)".to_string(),

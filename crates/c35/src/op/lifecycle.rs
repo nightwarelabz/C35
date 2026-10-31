@@ -47,7 +47,10 @@ impl OpState {
     /// Terminal states accept no further transition
     /// and no further ticks.
     pub fn is_terminal(self) -> bool {
-        matches!(self, OpState::Debriefed | OpState::Failed | OpState::Aborted)
+        matches!(
+            self,
+            OpState::Debriefed | OpState::Failed | OpState::Aborted
+        )
     }
 }
 
@@ -230,12 +233,12 @@ impl OpRecord {
         }
         self.descriptions_filed = t.descriptions_filed;
         self.witness_price = t.witness_price;
-        let crossed_patrol =
-            self.ticked && self.prev_level < AlertBudget::PATROL_AT
-                && t.alert_level >= AlertBudget::PATROL_AT;
-        let crossed_weathervane =
-            self.ticked && self.prev_level < AlertBudget::WEATHERVANE_AT
-                && t.alert_level >= AlertBudget::WEATHERVANE_AT;
+        let crossed_patrol = self.ticked
+            && self.prev_level < AlertBudget::PATROL_AT
+            && t.alert_level >= AlertBudget::PATROL_AT;
+        let crossed_weathervane = self.ticked
+            && self.prev_level < AlertBudget::WEATHERVANE_AT
+            && t.alert_level >= AlertBudget::WEATHERVANE_AT;
         let crossed_type2 = self.ticked
             && self.prev_level < AlertBudget::TYPE2_AT
             && t.alert_level >= AlertBudget::TYPE2_AT;

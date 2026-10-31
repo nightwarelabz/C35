@@ -32,7 +32,11 @@ fn main() {
             let z = eye.1 + (tgt.1 - eye.1) * t;
             maxh = maxh.max(height_at(x, z));
         }
-        println!("eye {:?} terrain h at eye = {:.1}, max h along ray = {:.1}",
-            eye, height_at(eye.0, eye.1), maxh);
+        println!(
+            "eye {:?} terrain h at eye = {:.1}, max h along ray = {:.1}",
+            eye,
+            height_at(eye.0, eye.1),
+            maxh
+        );
     }
 }

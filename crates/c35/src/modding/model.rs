@@ -272,7 +272,14 @@ pub struct PlacementContract {
 /// Placement tags: the closed vocabulary a placement rule may use.
 /// A prop tagged `wall-face` can be hung on a wall run; a prop
 /// tagged `street` cannot, and the validator says so.
-pub const TAGS: [&str; 6] = ["street", "kerb", "wall-face", "rooftop", "interior", "dockside"];
+pub const TAGS: [&str; 6] = [
+    "street",
+    "kerb",
+    "wall-face",
+    "rooftop",
+    "interior",
+    "dockside",
+];
 
 pub fn valid_tag(tag: &str) -> bool {
     TAGS.contains(&tag)
@@ -396,7 +403,9 @@ pub fn valid_id(id: &str) -> bool {
     }
     fn side_ok(s: &str) -> bool {
         !s.is_empty()
-            && s.chars().next().map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && s.chars()
+                .next()
+                .map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
                 .unwrap_or(false)
             && s.chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
@@ -409,11 +418,13 @@ pub fn valid_id(id: &str) -> bool {
 /// the namespace is what prop ids are checked against.
 pub fn valid_namespace(ns: &str) -> bool {
     !ns.is_empty()
-        && ns.chars()
+        && ns
+            .chars()
             .next()
             .map(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
             .unwrap_or(false)
-        && ns.chars()
+        && ns
+            .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 pub fn split_id(id: &str) -> Option<(&str, &str)> {
