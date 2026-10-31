@@ -201,7 +201,8 @@ impl WeatherState {
     }
 
     /// Fog density to ADD to the reality layer's
-    /// `fog_density` at bind time. 0..0.6.
+    /// `fog_density` at bind time. A density at the reality
+    /// layer's scale: 0..0.0072 (see regime::FOG_ADD_DENSITY_SCALE).
     pub fn fog_add(&self) -> f32 {
         self.fog_add
     }
