@@ -63,7 +63,13 @@ fn main() {
         }
         println!(
             "  bounds: x [{:.2}, {:.2}]  y [{:.2}, {:.2}]  z [{:.2}, {:.2}]  (height {:.2})",
-            lo.x, hi.x, lo.y, hi.y, lo.z, hi.z, hi.y - lo.y,
+            lo.x,
+            hi.x,
+            lo.y,
+            hi.y,
+            lo.z,
+            hi.z,
+            hi.y - lo.y,
         );
         for (i, p) in mesh.parts.iter().enumerate() {
             println!(

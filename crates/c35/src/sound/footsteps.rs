@@ -45,17 +45,17 @@ pub fn footstep_voice(
             // Hollow knock: pitch-drop thump + a short woody
             // resonance partial, both quick.
             parts.push((
-                Box::new(Thump::new(160.0, 70.0, 0.06 * decay_stretch, 0.20, sample_rate)),
+                Box::new(Thump::new(
+                    160.0,
+                    70.0,
+                    0.06 * decay_stretch,
+                    0.20,
+                    sample_rate,
+                )),
                 0.9,
             ));
             parts.push((
-                Box::new(Ring::new(
-                    320.0,
-                    &[(1.0, 0.35)],
-                    0.12,
-                    0.04,
-                    sample_rate,
-                )),
+                Box::new(Ring::new(320.0, &[(1.0, 0.35)], 0.12, 0.04, sample_rate)),
                 0.5,
             ));
             parts.push((
@@ -76,14 +76,27 @@ pub fn footstep_voice(
                 0.8,
             ));
             parts.push((
-                Box::new(NoiseBurst::new(seed, 4000.0, 0.04, 0.001, 0.012, sample_rate)),
+                Box::new(NoiseBurst::new(
+                    seed,
+                    4000.0,
+                    0.04,
+                    0.001,
+                    0.012,
+                    sample_rate,
+                )),
                 0.3,
             ));
         }
         SurfaceKind::Concrete => {
             // Dull thud: low drop + heavily lowpassed noise.
             parts.push((
-                Box::new(Thump::new(100.0, 45.0, 0.07 * decay_stretch, 0.20, sample_rate)),
+                Box::new(Thump::new(
+                    100.0,
+                    45.0,
+                    0.07 * decay_stretch,
+                    0.20,
+                    sample_rate,
+                )),
                 1.0,
             ));
             parts.push((
@@ -94,33 +107,72 @@ pub fn footstep_voice(
         SurfaceKind::Stone => {
             // Gravel crunch: thump + brighter noise than concrete.
             parts.push((
-                Box::new(Thump::new(120.0, 55.0, 0.06 * decay_stretch, 0.18, sample_rate)),
+                Box::new(Thump::new(
+                    120.0,
+                    55.0,
+                    0.06 * decay_stretch,
+                    0.18,
+                    sample_rate,
+                )),
                 0.9,
             ));
             parts.push((
-                Box::new(NoiseBurst::new(seed, 1400.0, 0.14, 0.002, 0.05, sample_rate)),
+                Box::new(NoiseBurst::new(
+                    seed,
+                    1400.0,
+                    0.14,
+                    0.002,
+                    0.05,
+                    sample_rate,
+                )),
                 0.55,
             ));
         }
         SurfaceKind::Brick => {
             // Between stone and concrete: crunch, duller.
             parts.push((
-                Box::new(Thump::new(110.0, 50.0, 0.06 * decay_stretch, 0.18, sample_rate)),
+                Box::new(Thump::new(
+                    110.0,
+                    50.0,
+                    0.06 * decay_stretch,
+                    0.18,
+                    sample_rate,
+                )),
                 0.9,
             ));
             parts.push((
-                Box::new(NoiseBurst::new(seed, 900.0, 0.12, 0.002, 0.045, sample_rate)),
+                Box::new(NoiseBurst::new(
+                    seed,
+                    900.0,
+                    0.12,
+                    0.002,
+                    0.045,
+                    sample_rate,
+                )),
                 0.5,
             ));
         }
         SurfaceKind::Asphalt => {
             // Soft thud: the quietest surface at the same speed.
             parts.push((
-                Box::new(Thump::new(90.0, 45.0, 0.06 * decay_stretch, 0.16, sample_rate)),
+                Box::new(Thump::new(
+                    90.0,
+                    45.0,
+                    0.06 * decay_stretch,
+                    0.16,
+                    sample_rate,
+                )),
                 0.8,
             ));
             parts.push((
-                Box::new(NoiseBurst::new(seed, 300.0, 0.09, 0.002, 0.035, sample_rate)),
+                Box::new(NoiseBurst::new(
+                    seed,
+                    300.0,
+                    0.09,
+                    0.002,
+                    0.035,
+                    sample_rate,
+                )),
                 0.3,
             ));
         }

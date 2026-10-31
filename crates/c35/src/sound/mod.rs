@@ -38,10 +38,10 @@ pub use playback::Playback;
 pub use rain::{RainBed, RainLoop};
 pub use synth::{Rng, VoiceGen};
 pub use voices::{
-    cannon_cool_voice, churr_voice, grapple_detach_voice, grapple_launch_voice,
-    grapple_reel_chunk, landing_voice, mantle_voice, report_murmur_voice, scream_voice,
-    seam_tick_voice, servo_chunk, sever_ring_voice, strike_fail_voice, strike_voice,
-    tremor_voice, visor_power_off_voice, visor_power_on_voice, visor_tag_voice,
+    cannon_cool_voice, churr_voice, grapple_detach_voice, grapple_launch_voice, grapple_reel_chunk,
+    landing_voice, mantle_voice, report_murmur_voice, scream_voice, seam_tick_voice, servo_chunk,
+    sever_ring_voice, strike_fail_voice, strike_voice, tremor_voice, visor_power_off_voice,
+    visor_power_on_voice, visor_tag_voice,
 };
 
 use crate::traversal::events::StimulusKind;

@@ -73,11 +73,7 @@ pub fn camera_at(t: f32) -> CameraPose {
     let bob = (t * 0.05).sin() * 0.7;
     let (s, c) = az.sin_cos();
     let rel = HERO_POSE.eye - HERO_POSE.target;
-    let rotated = Vec3::new(
-        rel.x * c - rel.z * s,
-        rel.y,
-        rel.x * s + rel.z * c,
-    );
+    let rotated = Vec3::new(rel.x * c - rel.z * s, rel.y, rel.x * s + rel.z * c);
     CameraPose {
         eye: HERO_POSE.target + rotated + Vec3::new(0.0, bob, 0.0),
         target: HERO_POSE.target + Vec3::new(0.0, (t * 0.03).sin() * 1.2, 0.0),
@@ -146,6 +142,7 @@ fn cliff_relief(x: f32, z: f32, h0: f32) -> f32 {
 /// The base landform (terrain generation v1, M1–M3): a crescent island —
 /// massif to the north-west, a secondary headland to the north-east, and
 /// a bay carved open to the south-east where the hero camera floats.
+#[allow(clippy::approx_constant)]
 fn height_base(x: f32, z: f32) -> f32 {
     let p = Vec2::new(x, z);
     let r = p.length();
@@ -219,13 +216,14 @@ impl HeightGrid {
         let mut heights = Vec::with_capacity(n * n);
         for j in 0..n {
             for i in 0..n {
-                heights.push(height_at(
-                    -half + i as f32 * step,
-                    -half + j as f32 * step,
-                ));
+                heights.push(height_at(-half + i as f32 * step, -half + j as f32 * step));
             }
         }
-        HeightGrid { heights, step, half }
+        HeightGrid {
+            heights,
+            step,
+            half,
+        }
     }
 
     /// Bilinear height at an arbitrary point (clamped to the field).
@@ -291,6 +289,12 @@ impl HeightGrid {
             visible += c * c;
         }
         (visible * 0.125).clamp(0.0, 1.0)
+    }
+}
+
+impl Default for HeightGrid {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -496,8 +500,7 @@ pub fn generate_tile(index: usize, grid: &HeightGrid) -> TerrainTile {
     let z0 = -half + j0 as f32 * step;
     let z1 = -half + (j0 + TILE_CELLS) as f32 * step;
     let center = Vec3::new((x0 + x1) * 0.5, (min_y + max_y) * 0.5, (z0 + z1) * 0.5);
-    let radius =
-        Vec3::new((x1 - x0) * 0.5, (max_y - min_y) * 0.5, (z1 - z0) * 0.5).length() + 0.5;
+    let radius = Vec3::new((x1 - x0) * 0.5, (max_y - min_y) * 0.5, (z1 - z0) * 0.5).length() + 0.5;
     TerrainTile {
         index,
         center,

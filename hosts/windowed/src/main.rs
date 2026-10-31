@@ -96,7 +96,10 @@ enum CamMode {
     Drift,
     Manual,
     /// Blending from a captured pose back to the drift orbit.
-    Blend { from: CameraPose, t: f32 },
+    Blend {
+        from: CameraPose,
+        t: f32,
+    },
 }
 
 struct App {
@@ -325,7 +328,7 @@ impl App {
                     self.frame_count += 1;
 
                     // The ledger rides the title bar.
-                    if self.frame_count % 30 == 0 {
+                    if self.frame_count.is_multiple_of(30) {
                         let (shadow_ms, scene_ms) = renderer.drain_gpu_samples();
                         let gpu = if scene_ms.is_empty() {
                             "gpu n/a".to_string()
@@ -426,8 +429,14 @@ impl ApplicationHandler for App {
             "UTC (no local offset available)".to_string()
         };
         println!("=== COMIGEN (windowed) ===");
-        println!("backend          : {}", self.renderer.as_ref().unwrap().backend_name());
-        println!("anti-aliasing    : {}", self.renderer.as_ref().unwrap().aa_description());
+        println!(
+            "backend          : {}",
+            self.renderer.as_ref().unwrap().backend_name()
+        );
+        println!(
+            "anti-aliasing    : {}",
+            self.renderer.as_ref().unwrap().aa_description()
+        );
         println!("governor         : live, target 16.7 ms (keys 0-4 pin a level, ` releases)");
         println!("clock source     : system clock (live, no pinning in the operator host)");
         println!("instant (UTC)    : {}", iso_utc(world.unix_seconds));
@@ -460,7 +469,10 @@ impl ApplicationHandler for App {
                 }
                 self.configure_surface();
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } => {
                 self.touch();
                 if !self.grabbed {
                     self.grab(true);

@@ -135,6 +135,7 @@ impl Sine {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f32 {
         let s = (self.phase * 2.0 * PI).sin();
         self.phase = (self.phase + self.freq / self.sample_rate) % 1.0;
@@ -163,6 +164,7 @@ impl Saw {
         self.freq = freq;
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f32 {
         let s = 2.0 * self.phase - 1.0;
         self.phase = (self.phase + self.freq / self.sample_rate) % 1.0;
@@ -195,6 +197,7 @@ impl DropOsc {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f32 {
         let freq = self.f1 + (self.f0 - self.f1) * (-self.t / self.tau).exp();
         let s = (self.phase * 2.0 * PI).sin();
@@ -362,13 +365,7 @@ pub struct Thump {
 }
 
 impl Thump {
-    pub fn new(
-        f0: f32,
-        f1: f32,
-        tau: f32,
-        dur: f32,
-        sample_rate: f32,
-    ) -> Thump {
+    pub fn new(f0: f32, f1: f32, tau: f32, dur: f32, sample_rate: f32) -> Thump {
         Thump {
             osc: DropOsc::new(f0, f1, tau, sample_rate),
             t: 0.0,

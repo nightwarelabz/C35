@@ -125,6 +125,12 @@ impl AlertBudget {
     }
 }
 
+impl Default for AlertBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The witness ledger: descriptions the city holds.
 /// Descriptions price checkpoint reads and block the
 /// Wanderer while active. The ledger never forgets a

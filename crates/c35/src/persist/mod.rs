@@ -69,6 +69,6 @@ pub mod model;
 pub use error::PersistError;
 pub use format::{crc32, FORMAT_VERSION, MAGIC};
 pub use model::{
-    Archive, ArchiveEntry, Career, CareerStatus, EntityState, JournalEntry, Snapshot,
-    WorldDelta, WorldState,
+    Archive, ArchiveEntry, Career, CareerStatus, EntityState, JournalEntry, Snapshot, WorldDelta,
+    WorldState,
 };

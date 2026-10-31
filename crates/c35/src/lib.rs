@@ -65,11 +65,11 @@ pub mod vista;
 pub mod weather;
 pub mod world;
 
-/// Re-exported so hosts build against exactly the engine's wgpu.
-pub use wgpu;
-pub use pollster;
 pub use glam;
 pub use operator::OperatorPose;
+pub use pollster;
+/// Re-exported so hosts build against exactly the engine's wgpu.
+pub use wgpu;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -857,12 +857,11 @@ impl Renderer {
                 },
             ],
         });
-        let blit_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("blit pipeline layout"),
-                bind_group_layouts: &[&blit_layout],
-                push_constant_ranges: &[],
-            });
+        let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blit pipeline layout"),
+            bind_group_layouts: &[&blit_layout],
+            push_constant_ranges: &[],
+        });
         let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("blit sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1119,20 +1118,19 @@ impl Renderer {
             mapped_at_creation: false,
         });
         queue.write_buffer(&props_lamp_buf, 0, bytemuck::cast_slice(&[[0.0f32; 4]; 24]));
-        let props_lamp_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("props lamp layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let props_lamp_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("props lamp layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
         let props_lamp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("props lamp bind group"),
             layout: &props_lamp_layout,
@@ -1168,15 +1166,11 @@ impl Renderer {
         });
         let water_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water"),
-            source: wgpu::ShaderSource::Wgsl(
-                shader_src(include_str!("shaders/water.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader_src(include_str!("shaders/water.wgsl")).into()),
         });
         let depth_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("depth"),
-            source: wgpu::ShaderSource::Wgsl(
-                shader_src(include_str!("shaders/depth.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader_src(include_str!("shaders/depth.wgsl")).into()),
         });
         let operator_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("operator"),
@@ -1186,9 +1180,7 @@ impl Renderer {
         });
         let props_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("props"),
-            source: wgpu::ShaderSource::Wgsl(
-                shader_src(include_str!("shaders/props.wgsl")).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader_src(include_str!("shaders/props.wgsl")).into()),
         });
         let blit_shader = if aa_mode == AaMode::Fxaa {
             include_str!("shaders/fxaa.wgsl")
@@ -1510,36 +1502,35 @@ impl Renderer {
             multiview: None,
             cache: None,
         });
-        let props_depth_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("props shadow depth pipeline"),
-                layout: Some(&depth_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &props_module,
-                    entry_point: Some("vs_depth"),
-                    compilation_options: Default::default(),
-                    buffers: &props_vb_layout,
+        let props_depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("props shadow depth pipeline"),
+            layout: Some(&depth_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &props_module,
+                entry_point: Some("vs_depth"),
+                compilation_options: Default::default(),
+                buffers: &props_vb_layout,
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
                 },
-                fragment: None,
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: 2,
-                        slope_scale: 2.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         let resolve_pipeline = if aa_mode == AaMode::Taa {
             let layout = resolve_layout.as_ref().unwrap();
@@ -1550,31 +1541,31 @@ impl Renderer {
             });
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("resolve"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("shaders/resolve.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/resolve.wgsl").into()),
             });
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("taa resolve pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &scene_color_target,
+            Some(
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("taa resolve pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &scene_color_target,
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
                 }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            }))
+            )
         } else {
             None
         };
@@ -1684,28 +1675,27 @@ impl Renderer {
                 multiview: None,
                 cache: None,
             });
-        let bloom_blur_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("bloom blur pipeline"),
-                layout: Some(&bloom_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &bloom_module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &bloom_module,
-                    entry_point: Some("fs_blur"),
-                    compilation_options: Default::default(),
-                    targets: &bloom_color_target,
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let bloom_blur_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bloom blur pipeline"),
+            layout: Some(&bloom_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &bloom_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bloom_module,
+                entry_point: Some("fs_blur"),
+                compilation_options: Default::default(),
+                targets: &bloom_color_target,
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
         let bloom_uniform_h_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("bloom uniform horizontal"),
             contents: bytemuck::cast_slice(&[BloomParams {
@@ -2414,9 +2404,7 @@ impl Renderer {
     /// The honest one-liner every ledger prints about culling.
     pub fn culling_description(&self) -> &'static str {
         match self.cull_mode {
-            CullMode::Gpu => {
-                "GPU compute (tile frustum + LOD in a compute pass, indirect draws)"
-            }
+            CullMode::Gpu => "GPU compute (tile frustum + LOD in a compute pass, indirect draws)",
             CullMode::Cpu => "CPU visibility system",
         }
     }
@@ -2491,8 +2479,7 @@ impl Renderer {
                 self.operator_bytes = 0;
             }
             Some(p) => {
-                let ground =
-                    scene::height_at(operator::OPERATOR_SPOT.0, operator::OPERATOR_SPOT.1);
+                let ground = scene::height_at(operator::OPERATOR_SPOT.0, operator::OPERATOR_SPOT.1);
                 let mesh = operator::build_operator(
                     p,
                     Vec3::new(operator::OPERATOR_SPOT.0, 0.0, operator::OPERATOR_SPOT.1),
@@ -2537,16 +2524,20 @@ impl Renderer {
             self.queue.write_buffer(vb, 0, vbytes);
             self.queue.write_buffer(ib, 0, ibytes);
         } else {
-            let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("operator vertices"),
-                contents: vbytes,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-            let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("operator indices"),
-                contents: ibytes,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            });
+            let vb = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("operator vertices"),
+                    contents: vbytes,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+            let ib = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("operator indices"),
+                    contents: ibytes,
+                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                });
             self.operator_bufs = Some((vb, ib, mesh.indices.len() as u32));
         }
         self.operator_tris = mesh.triangle_count();
@@ -2575,19 +2566,22 @@ impl Renderer {
             Some(m) => {
                 let vbytes: &[u8] = bytemuck::cast_slice(&m.vertices);
                 let ibytes: &[u8] = bytemuck::cast_slice(&m.indices);
-                let vb = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("props vertices"),
-                    contents: vbytes,
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let ib = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("props indices"),
-                    contents: ibytes,
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let vb = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("props vertices"),
+                        contents: vbytes,
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                let ib = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("props indices"),
+                        contents: ibytes,
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
                 self.props_tris = (m.indices.len() / 3) as u64;
-                self.props_bytes = (m.vertices.len()
-                    * std::mem::size_of::<props::PropVertex>()
+                self.props_bytes = (m.vertices.len() * std::mem::size_of::<props::PropVertex>()
                     + m.indices.len() * 4) as u64;
                 self.props_bufs = Some((vb, ib, m.indices.len() as u32));
             }
@@ -2778,8 +2772,16 @@ impl Renderer {
 
     /// Drain collected GPU pass durations (shadow_ms, scene_ms).
     pub fn drain_gpu_samples(&self) -> (Vec<f64>, Vec<f64>) {
-        let shadow = self.shadow_timer.as_ref().map(|t| t.drain()).unwrap_or_default();
-        let scene = self.scene_timer.as_ref().map(|t| t.drain()).unwrap_or_default();
+        let shadow = self
+            .shadow_timer
+            .as_ref()
+            .map(|t| t.drain())
+            .unwrap_or_default();
+        let scene = self
+            .scene_timer
+            .as_ref()
+            .map(|t| t.drain())
+            .unwrap_or_default();
         (shadow, scene)
     }
 
@@ -2787,7 +2789,11 @@ impl Renderer {
     fn light_view_proj(sun_dir: Vec3) -> Mat4 {
         let center = Vec3::new(0.0, 10.0, 0.0);
         let eye = center - sun_dir * (SHADOW_RADIUS + 80.0);
-        let up = if sun_dir.y.abs() > 0.95 { Vec3::X } else { Vec3::Y };
+        let up = if sun_dir.y.abs() > 0.95 {
+            Vec3::X
+        } else {
+            Vec3::Y
+        };
         let view = Mat4::look_at_rh(eye, center, up);
         let proj = Mat4::orthographic_rh(
             -SHADOW_RADIUS,
@@ -2802,7 +2808,13 @@ impl Renderer {
 
     /// Render one frame of the vista into `out_view`, lit and seasoned by
     /// `world` (the reality layer's reading for this instant and place).
-    pub fn render(&mut self, out_view: &wgpu::TextureView, pose: &CameraPose, world: &WorldState, time: f32) {
+    pub fn render(
+        &mut self,
+        out_view: &wgpu::TextureView,
+        pose: &CameraPose,
+        world: &WorldState,
+        time: f32,
+    ) {
         let (internal_w, internal_h, aspect, _out_w, _out_h) = {
             let t = self.targets.as_ref().expect("renderer sized");
             (
@@ -2821,14 +2833,9 @@ impl Renderer {
         let sun_up = world.sun_elevation_deg > 0.0;
         let light_vp = Self::light_view_proj(world.sun_dir);
         let shadow_light = sun_up && self.shadow_size > 0;
-        let stats = self.vista.update(
-            &self.pool,
-            pose,
-            world,
-            view_proj,
-            light_vp,
-            shadow_light,
-        );
+        let stats = self
+            .vista
+            .update(&self.pool, pose, world, view_proj, light_vp, shadow_light);
         self.core_stats = stats;
         let targets = self.targets.as_ref().expect("renderer sized");
 
@@ -2899,12 +2906,7 @@ impl Renderer {
                 world.fog_color.z,
                 world.fog_density,
             ],
-            season: [
-                world.cold,
-                world.autumn,
-                world.spring,
-                world.snow_line,
-            ],
+            season: [world.cold, world.autumn, world.spring, world.snow_line],
             water_p: [
                 world.water_ice,
                 world.water_wave_scale,
@@ -3329,7 +3331,11 @@ impl Renderer {
             self.vista.cull.shadow_tris
         };
         self.last_shadow_tris = vista_shadow_tris
-            + if shadow_light { self.operator_tris + self.props_tris } else { 0 };
+            + if shadow_light {
+                self.operator_tris + self.props_tris
+            } else {
+                0
+            };
     }
 }
 

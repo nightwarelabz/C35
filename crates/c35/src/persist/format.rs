@@ -254,8 +254,7 @@ pub fn unwrap(data: &[u8]) -> Result<&[u8], PersistError> {
     if version != FORMAT_VERSION {
         return Err(PersistError::UnsupportedVersion(version));
     }
-    let body_len =
-        u32::from_le_bytes([data[6], data[7], data[8], data[9]]) as usize;
+    let body_len = u32::from_le_bytes([data[6], data[7], data[8], data[9]]) as usize;
     // Total must be exactly header + body + checksum.
     let total = 10usize
         .checked_add(body_len)

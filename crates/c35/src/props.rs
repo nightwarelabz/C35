@@ -277,7 +277,11 @@ fn paint_brick(a: &mut Atlas, r: (u32, u32, u32, u32), base: [u8; 3], dark: [u8;
         let mut x = r.0 as i32 - off as i32;
         while x < (r.0 + r.2) as i32 {
             let tone = 0.82 + (rng.next() % 36) as f32 / 100.0;
-            let c = if rng.next() % 7 == 0 { dark } else { base };
+            let c = if rng.next().is_multiple_of(7) {
+                dark
+            } else {
+                base
+            };
             let c = [
                 (c[0] as f32 * tone).clamp(0.0, 255.0) as u8,
                 (c[1] as f32 * tone).clamp(0.0, 255.0) as u8,
@@ -401,9 +405,21 @@ fn soften_city(a: &mut Atlas, r: (u32, u32, u32, u32)) {
 pub fn generate_city_atlas() -> Vec<u8> {
     let mut a = Atlas::new();
     // ---- masonry ----
-    paint_brick(&mut a, region::BRICK, [128, 74, 58], [96, 52, 44], 0xC17E_0001);
+    paint_brick(
+        &mut a,
+        region::BRICK,
+        [128, 74, 58],
+        [96, 52, 44],
+        0xC17E_0001,
+    );
     a.vshade(region::BRICK, 1.04, 0.78); // grime settles downward
-    paint_brick(&mut a, region::BRICK_DARK, [84, 62, 56], [58, 42, 40], 0xC17E_0002);
+    paint_brick(
+        &mut a,
+        region::BRICK_DARK,
+        [84, 62, 56],
+        [58, 42, 40],
+        0xC17E_0002,
+    );
     a.vshade(region::BRICK_DARK, 1.02, 0.74);
     paint_stone(&mut a, region::STONE, 0xC17E_0003);
     // ---- ground ----
@@ -543,14 +559,28 @@ pub fn generate_city_atlas() -> Vec<u8> {
     {
         // The banner: deep red cloth, three white bars, worn.
         let r = region::BANNER;
-        a.cloth(r, [110, 30, 30], 6, Some((&[[96, 24, 26], [124, 38, 34]], 60, 8)), 0xC17E_0007);
+        a.cloth(
+            r,
+            [110, 30, 30],
+            6,
+            Some((&[[96, 24, 26], [124, 38, 34]], 60, 8)),
+            0xC17E_0007,
+        );
         // Bars occupy the middle band; three verticals, evenly read.
         for i in 0..3 {
             let bx = r.0 + 22 + i * 22;
             for y in r.1 + 26..r.1 + 102 {
                 for x in bx..bx + 11 {
                     let worn = (x + y) % 9 == 0;
-                    a.set(x, y, if worn { [168, 150, 138] } else { [216, 208, 196] });
+                    a.set(
+                        x,
+                        y,
+                        if worn {
+                            [168, 150, 138]
+                        } else {
+                            [216, 208, 196]
+                        },
+                    );
                 }
             }
         }
@@ -565,9 +595,9 @@ pub fn generate_city_atlas() -> Vec<u8> {
         a.rect((r.0 + 30, r.1 + 18, 20, 32), [16, 18, 20]); // glass slit
         a.rect((r.0 + 30, r.1 + 18, 20, 3), [52, 54, 52]);
         a.rect((r.0 + r.2 - 14, r.1 + 62, 5, 10), [150, 148, 140]); // handle
-        // Graphics push 2 — the door's furniture of wear: hinge
-        // blocks on the left jamb and a scuffed kick plate along
-        // the foot, where boots land.
+                                                                    // Graphics push 2 — the door's furniture of wear: hinge
+                                                                    // blocks on the left jamb and a scuffed kick plate along
+                                                                    // the foot, where boots land.
         a.rect((r.0 + 4, r.1 + 10, 4, 9), [56, 58, 56]);
         a.rect((r.0 + 4, r.1 + 58, 4, 9), [56, 58, 56]);
         a.rect((r.0 + 4, r.1 + 106, 4, 9), [56, 58, 56]);
@@ -600,7 +630,13 @@ pub fn generate_city_atlas() -> Vec<u8> {
     {
         // Dark window: dead blue-grey glass, a diagonal sheen.
         let r = region::WINDOW_DARK;
-        a.cloth(r, [26, 32, 40], 4, Some((&[[20, 25, 32], [34, 42, 52]], 24, 9)), 0xC17E_000A);
+        a.cloth(
+            r,
+            [26, 32, 40],
+            4,
+            Some((&[[20, 25, 32], [34, 42, 52]], 24, 9)),
+            0xC17E_000A,
+        );
         for k in 0..40 {
             let x = r.0 + 6 + k;
             let y = r.1 + 8 + k / 2;
@@ -628,7 +664,13 @@ pub fn generate_city_atlas() -> Vec<u8> {
     {
         // Painted metal: dark dockyard green-grey, panel seams, rust.
         let r = region::METAL_DARK;
-        a.cloth(r, [52, 56, 54], 5, Some((&[[44, 48, 46], [62, 66, 62], [70, 58, 44]], 90, 8)), 0xC17E_000C);
+        a.cloth(
+            r,
+            [52, 56, 54],
+            5,
+            Some((&[[44, 48, 46], [62, 66, 62], [70, 58, 44]], 90, 8)),
+            0xC17E_000C,
+        );
         for k in 0..=2 {
             let x = r.0 + k * 64;
             for y in r.1..r.1 + r.3 {
@@ -673,7 +715,13 @@ pub fn generate_city_atlas() -> Vec<u8> {
     {
         // Checkpoint timber: planks + worn paint bands.
         let r = region::TIMBER;
-        a.cloth(r, [96, 78, 56], 6, Some((&[[82, 64, 44], [110, 92, 68]], 120, 7)), 0xC17E_000E);
+        a.cloth(
+            r,
+            [96, 78, 56],
+            6,
+            Some((&[[82, 64, 44], [110, 92, 68]], 120, 7)),
+            0xC17E_000E,
+        );
         for band in 0..3 {
             let x0 = r.0 + 8 + band * 42;
             a.rect((x0, r.1 + 10, 20, r.3 - 20), [196, 190, 178]);
@@ -716,7 +764,11 @@ pub fn generate_city_atlas() -> Vec<u8> {
             let by = r.1 + rng.range(r.3.saturating_sub(16).max(1));
             let bw = 8 + rng.range(16);
             let bh = 8 + rng.range(16);
-            let tone = if rng.next() % 2 == 0 { 0.88 } else { 1.10 };
+            let tone = if rng.next().is_multiple_of(2) {
+                0.88
+            } else {
+                1.10
+            };
             for y in by..(by + bh).min(r.1 + r.3) {
                 for x in bx..(bx + bw).min(r.0 + r.2) {
                     let c = a.get(x, y);
@@ -738,7 +790,11 @@ pub fn generate_city_atlas() -> Vec<u8> {
             let by = r.1 + rng.range(r.3.saturating_sub(14).max(1));
             let bw = 8 + rng.range(14);
             let bh = 6 + rng.range(12);
-            let tone = if rng.next() % 2 == 0 { 0.82 } else { 1.14 };
+            let tone = if rng.next().is_multiple_of(2) {
+                0.82
+            } else {
+                1.14
+            };
             for y in by..(by + bh).min(r.1 + r.3) {
                 for x in bx..(bx + bw).min(r.0 + r.2) {
                     let c = a.get(x, y);

@@ -10,9 +10,7 @@
 //! the engine assigns no band or rank; what a score
 //! means for progression is the host's decision.
 
-use c35::op::{
-    grade, DebriefRecord, GradeWeights, OpOutcome, OpRecord, OpTick,
-};
+use c35::op::{grade, DebriefRecord, GradeWeights, OpOutcome, OpRecord, OpTick};
 use c35::persist::model::Snapshot;
 
 fn main() {
@@ -20,9 +18,15 @@ fn main() {
     // Kinds are host words; the engine never reads
     // them as instructions.
     let mut op = OpRecord::open("op.greyport.07", "Cross the checkpoint");
-    op.objectives.add("obj.cross", "cross", "Cross the checkpoint").unwrap();
-    op.objectives.add("obj.retrieve", "retrieve", "Retrieve the ledger").unwrap();
-    op.objectives.add("obj.observe", "observe", "Observe the patrol").unwrap();
+    op.objectives
+        .add("obj.cross", "cross", "Cross the checkpoint")
+        .unwrap();
+    op.objectives
+        .add("obj.retrieve", "retrieve", "Retrieve the ledger")
+        .unwrap();
+    op.objectives
+        .add("obj.observe", "observe", "Observe the patrol")
+        .unwrap();
     println!("op {} opened: {:?}", op.id, op.state);
 
     // Active: begin, then work the objectives.
@@ -39,9 +43,27 @@ fn main() {
     // Type 2 thresholds upward — reported as facts,
     // never acted on here.
     let ticks = [
-        OpTick { dt_s: 120.0, alert_level: 8.0, alert_tier: 0, descriptions_filed: 0, witness_price: 0.0 },
-        OpTick { dt_s: 240.0, alert_level: 30.0, alert_tier: 1, descriptions_filed: 1, witness_price: 1.0 },
-        OpTick { dt_s: 180.0, alert_level: 78.0, alert_tier: 2, descriptions_filed: 2, witness_price: 4.0 },
+        OpTick {
+            dt_s: 120.0,
+            alert_level: 8.0,
+            alert_tier: 0,
+            descriptions_filed: 0,
+            witness_price: 0.0,
+        },
+        OpTick {
+            dt_s: 240.0,
+            alert_level: 30.0,
+            alert_tier: 1,
+            descriptions_filed: 1,
+            witness_price: 1.0,
+        },
+        OpTick {
+            dt_s: 180.0,
+            alert_level: 78.0,
+            alert_tier: 2,
+            descriptions_filed: 2,
+            witness_price: 4.0,
+        },
     ];
     for t in ticks {
         op.tick(t).unwrap();
@@ -104,6 +126,9 @@ fn main() {
     let filed = snap.file_journal(100);
     println!("debrief lines pushed: {} filed: {}", pushed, filed);
     for a in snap.archive.iter() {
-        println!("  archive [{} career {}]: {}", a.filed_day, a.career, a.text);
+        println!(
+            "  archive [{} career {}]: {}",
+            a.filed_day, a.career, a.text
+        );
     }
 }

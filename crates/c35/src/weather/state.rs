@@ -141,11 +141,9 @@ impl WeatherState {
         // the strike point (a mast, a rooftop) when it
         // drains last_strike. A fixed district-centre
         // default keeps the demo honest without geography.
-        self.last_strike = self.strikes.poll(
-            self.hours,
-            self.regime.strikes(),
-            Vec3::new(0.0, 60.0, 0.0),
-        );
+        self.last_strike =
+            self.strikes
+                .poll(self.hours, self.regime.strikes(), Vec3::new(0.0, 60.0, 0.0));
     }
 
     fn sample(&mut self) {

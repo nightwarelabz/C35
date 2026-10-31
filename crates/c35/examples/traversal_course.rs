@@ -12,9 +12,7 @@
 use c35::scene::height_at;
 use c35::traversal::events::StimulusKind;
 use c35::traversal::nav::{bake, route};
-use c35::traversal::physics::{
-    BoxCollider, SeamDetector, StaticWorld, SEAM_SLEW,
-};
+use c35::traversal::physics::{BoxCollider, SeamDetector, StaticWorld, SEAM_SLEW};
 use c35::traversal::rope::{MAX_LINE, MIN_ROPE, REEL_SPEED};
 use c35::traversal::surface::{SurfaceKind, SurfaceRecord};
 use c35::traversal::wallrun::{BUDGET_PER_SPEED, MIN_ENTRY_SPEED};
@@ -23,18 +21,8 @@ use glam::Vec3;
 
 const DT: f32 = 1.0 / 240.0;
 
-fn bx(
-    w: &mut StaticWorld,
-    min: Vec3,
-    max: Vec3,
-    kind: SurfaceKind,
-    wet: f32,
-) {
-    w.add(BoxCollider::new(
-        min,
-        max,
-        SurfaceRecord::wet(kind, wet),
-    ));
+fn bx(w: &mut StaticWorld, min: Vec3, max: Vec3, kind: SurfaceKind, wet: f32) {
+    w.add(BoxCollider::new(min, max, SurfaceRecord::wet(kind, wet)));
 }
 
 /// The course block (metres). Wall A runs the street at z=-0.5
@@ -43,16 +31,59 @@ fn bx(
 /// are the grapple-link pair across a 10 m gap.
 fn course_world(wet: f32) -> StaticWorld {
     let mut w = StaticWorld::new();
-    bx(&mut w, Vec3::new(-60.0, -1.0, -40.0), Vec3::new(60.0, 0.0, 40.0), SurfaceKind::Asphalt, 0.0);
-    bx(&mut w, Vec3::new(-20.0, 0.0, -10.5), Vec3::new(20.0, 12.0, -0.5), SurfaceKind::Brick, wet);
-    bx(&mut w, Vec3::new(24.5, 0.0, -0.5), Vec3::new(25.5, 14.0, 0.5), SurfaceKind::Metal, 0.0);
-    bx(&mut w, Vec3::new(20.0, 0.0, 8.0), Vec3::new(50.0, 12.0, 18.0), SurfaceKind::Concrete, wet);
-    bx(&mut w, Vec3::new(44.0, 0.0, 4.0), Vec3::new(46.0, 1.2, 6.0), SurfaceKind::Wood, 0.0);
-    bx(&mut w, Vec3::new(-20.0, 0.0, -20.0), Vec3::new(0.0, 6.0, -10.0), SurfaceKind::Stone, 0.0);
-    bx(&mut w, Vec3::new(10.0, 0.0, -20.0), Vec3::new(30.0, 6.0, -10.0), SurfaceKind::Stone, 0.0);
+    bx(
+        &mut w,
+        Vec3::new(-60.0, -1.0, -40.0),
+        Vec3::new(60.0, 0.0, 40.0),
+        SurfaceKind::Asphalt,
+        0.0,
+    );
+    bx(
+        &mut w,
+        Vec3::new(-20.0, 0.0, -10.5),
+        Vec3::new(20.0, 12.0, -0.5),
+        SurfaceKind::Brick,
+        wet,
+    );
+    bx(
+        &mut w,
+        Vec3::new(24.5, 0.0, -0.5),
+        Vec3::new(25.5, 14.0, 0.5),
+        SurfaceKind::Metal,
+        0.0,
+    );
+    bx(
+        &mut w,
+        Vec3::new(20.0, 0.0, 8.0),
+        Vec3::new(50.0, 12.0, 18.0),
+        SurfaceKind::Concrete,
+        wet,
+    );
+    bx(
+        &mut w,
+        Vec3::new(44.0, 0.0, 4.0),
+        Vec3::new(46.0, 1.2, 6.0),
+        SurfaceKind::Wood,
+        0.0,
+    );
+    bx(
+        &mut w,
+        Vec3::new(-20.0, 0.0, -20.0),
+        Vec3::new(0.0, 6.0, -10.0),
+        SurfaceKind::Stone,
+        0.0,
+    );
+    bx(
+        &mut w,
+        Vec3::new(10.0, 0.0, -20.0),
+        Vec3::new(30.0, 6.0, -10.0),
+        SurfaceKind::Stone,
+        0.0,
+    );
     w
 }
 
+#[allow(clippy::too_many_arguments)]
 fn input(
     wish: Vec3,
     facing: Vec3,
@@ -109,16 +140,7 @@ fn main() {
                 (false, true)
             };
             sim.tick(
-                input(
-                    Vec3::ZERO,
-                    Vec3::X,
-                    0.0,
-                    false,
-                    press,
-                    held,
-                    false,
-                    Vec3::Y,
-                ),
+                input(Vec3::ZERO, Vec3::X, 0.0, false, press, held, false, Vec3::Y),
                 &world,
             );
             fails = sim.events.count(StimulusKind::StrikeFail);
@@ -207,11 +229,7 @@ fn main() {
         for t in 0..4800 {
             let origin = sim.body.feet + Vec3::new(0.0, 1.4, 0.0);
             let aim = aim_at(origin, mast);
-            let (press, held) = if t == 0 {
-                (true, true)
-            } else {
-                (false, true)
-            };
+            let (press, held) = if t == 0 { (true, true) } else { (false, true) };
             // Release mid-swing: airborne, past the pivot
             // plane, moving forward. A fixed x > 28 trigger
             // cannot fire — a reeled rope (len -> 2 m) caps
@@ -312,10 +330,13 @@ fn main() {
             let (wish, jump) = if topped {
                 (Vec3::X, false)
             } else {
-                let to_crate =
-                    Vec3::new(44.0 - sim.body.feet.x, 0.0, 5.0 - sim.body.feet.z);
+                let to_crate = Vec3::new(44.0 - sim.body.feet.x, 0.0, 5.0 - sim.body.feet.z);
                 let dist = to_crate.length();
-                let wish = if dist > 0.01 { to_crate / dist } else { Vec3::X };
+                let wish = if dist > 0.01 {
+                    to_crate / dist
+                } else {
+                    Vec3::X
+                };
                 (wish, dist < 1.2 && sim.body.grounded)
             };
             sim.tick(
@@ -363,7 +384,11 @@ fn main() {
             "phase 5 wet wall-run A (wetness 0.8): budget_max={:.2}s vs dry {:.2}s (ratio {:.2})",
             budget,
             dry_budget,
-            if dry_budget > 0.0 { budget / dry_budget } else { 0.0 }
+            if dry_budget > 0.0 {
+                budget / dry_budget
+            } else {
+                0.0
+            }
         );
     }
 
@@ -472,7 +497,9 @@ fn main() {
                 );
             }
             None => {
-                println!("phase 7 seam crossing: no contour crossing found on the scanned shore lines");
+                println!(
+                    "phase 7 seam crossing: no contour crossing found on the scanned shore lines"
+                );
             }
         }
     }

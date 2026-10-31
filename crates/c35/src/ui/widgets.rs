@@ -68,10 +68,7 @@ impl UiScreen {
     fn ndc(&self, x_pt: f32, y_pt: f32) -> [f32; 2] {
         let px = x_pt * self.scale;
         let py = y_pt * self.scale;
-        [
-            px / self.frame_w * 2.0 - 1.0,
-            1.0 - py / self.frame_h * 2.0,
-        ]
+        [px / self.frame_w * 2.0 - 1.0, 1.0 - py / self.frame_h * 2.0]
     }
 
     /// Append a point-space rect as one quad. The rect's
@@ -155,7 +152,15 @@ impl UiScreen {
     /// A bar: track quad, fill quad at `frac` (clamped to
     /// 0..1), optional border via `panel`. The host owns
     /// what the fraction means; UI only draws it.
-    pub fn bar(&mut self, r: Rect, frac: f32, track: Color, fill: Color, border: Color, border_pt: f32) {
+    pub fn bar(
+        &mut self,
+        r: Rect,
+        frac: f32,
+        track: Color,
+        fill: Color,
+        border: Color,
+        border_pt: f32,
+    ) {
         self.panel(r, track, border, border_pt);
         let f = frac.clamp(0.0, 1.0);
         if f > 0.0 {
@@ -171,6 +176,7 @@ impl UiScreen {
     /// A marker glyph (">") marks the selected row. Rows
     /// past the rect's bottom are clipped, never drawn
     /// off-frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn list(
         &mut self,
         rows: &[&str],
@@ -207,6 +213,7 @@ impl UiScreen {
     /// chevron for [`DialogueCue::End`], nothing for
     /// [`DialogueCue::None`]. The dialogue SYSTEM fills
     /// this box later; UI only provides the box.
+    #[allow(clippy::too_many_arguments)]
     pub fn dialogue(
         &mut self,
         speaker: &str,

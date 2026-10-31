@@ -104,11 +104,11 @@ pub fn line_runs(text: &str, size: f32) -> Vec<(f32, f32, f32)> {
     for (i, c) in text.chars().enumerate() {
         let g = glyph_for(c);
         let ox = i as f32 * advance(size);
-        for row in 0..7 {
+        for (row, grow) in g.iter().enumerate() {
             let mut run_start: Option<u8> = None;
             let mut prev: u8 = 0;
             for col in 0..5 {
-                let set = g[row] & (1 << (4 - col)) != 0;
+                let set = *grow & (1 << (4 - col)) != 0;
                 if set && run_start.is_none() {
                     run_start = Some(col);
                 }

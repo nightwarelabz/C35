@@ -286,18 +286,12 @@ fn shipped(
 /// Defaults for a parameter map (used to build shipped props at
 /// registration and as the base for every override chain).
 pub fn resolve_defaults(params: &BTreeMap<String, ParamDef>) -> ParamValues {
-    params
-        .iter()
-        .map(|(k, d)| (k.clone(), d.default))
-        .collect()
+    params.iter().map(|(k, d)| (k.clone(), d.default)).collect()
 }
 
 /// Resolve a recipe's `$param` references against values. Unknown
 /// parameters and boolean-in-a-number-slot are errors.
-pub fn resolve_recipe(
-    recipe: &[PartRecipe],
-    values: &ParamValues,
-) -> Result<Vec<Part>, String> {
+pub fn resolve_recipe(recipe: &[PartRecipe], values: &ParamValues) -> Result<Vec<Part>, String> {
     fn resolve_one(v: &NumOrParam, values: &ParamValues) -> Result<f32, String> {
         match v {
             NumOrParam::Num(n) => {
@@ -334,9 +328,7 @@ pub fn resolve_recipe(
             Primitive::Box | Primitive::Wedge | Primitive::Cylinder => {
                 for (i, s) in size.iter().enumerate() {
                     if *s <= 0.0 {
-                        return Err(format!(
-                            "part size component {i} must be positive, got {s}"
-                        ));
+                        return Err(format!("part size component {i} must be positive, got {s}"));
                     }
                 }
             }
@@ -578,11 +570,7 @@ impl Registry {
     /// Build a prop's mesh: defaults -> game-wide replacement ->
     /// placement overrides. Every override is range-checked against
     /// the prop's declared parameters before it applies.
-    pub fn build(
-        &self,
-        id: &str,
-        overrides: &ParamValues,
-    ) -> Result<BuiltProp, String> {
+    pub fn build(&self, id: &str, overrides: &ParamValues) -> Result<BuiltProp, String> {
         let def = self
             .props
             .get(id)
@@ -659,9 +647,9 @@ mod tests {
             ("debrief:chair", 72),
         ];
         for (id, tris) in expected {
-            let built = reg.build(id, &ParamValues::new()).unwrap_or_else(|e| {
-                panic!("shipped prop '{id}' failed to build: {e}")
-            });
+            let built = reg
+                .build(id, &ParamValues::new())
+                .unwrap_or_else(|e| panic!("shipped prop '{id}' failed to build: {e}"));
             assert_eq!(built.triangles, tris, "prop {id}");
             assert_eq!(built.mesh.indices.len() as u64, tris * 3, "mesh {id}");
             assert!(reg.get(id).unwrap().placement.is_some(), "contract {id}");

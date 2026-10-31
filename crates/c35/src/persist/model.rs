@@ -419,11 +419,7 @@ impl Snapshot {
             d => return Err(PersistError::InvalidEnum(d)),
         };
         Ok(Snapshot {
-            world: WorldState {
-                seed,
-                day,
-                deltas,
-            },
+            world: WorldState { seed, day, deltas },
             entities,
             journal,
             archive,

@@ -251,7 +251,12 @@ fn main() {
     }
 
     write_wav(&out, &all, SAMPLE_RATE).expect("wav write");
-    println!("wrote {} ({} frames, {} s)", out, all.len() / 2, all.len() / 2 / SAMPLE_RATE as usize);
+    println!(
+        "wrote {} ({} frames, {} s)",
+        out,
+        all.len() / 2,
+        all.len() / 2 / SAMPLE_RATE as usize
+    );
     println!("{}", pb.ledger_line());
     println!(
         "active voices at end: {} (the 4 music stems persist by design)",

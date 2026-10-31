@@ -64,7 +64,8 @@ fn main() {
     println!("field: lamp pool light {lamp_light:.2}, shadow light {shadow_light:.2}");
 
     // ---- Scene A: a glimpse → suspicious → search → patrol.
-    let mut soldier = SoldierBrain::new(1, Vec3::new(0.0, 0.0, 0.0), vec![Vec3::new(0.0, 0.0, 0.0)]);
+    let mut soldier =
+        SoldierBrain::new(1, Vec3::new(0.0, 0.0, 0.0), vec![Vec3::new(0.0, 0.0, 0.0)]);
     let mut prev = soldier.state;
     let player_spot = Vec3::new(10.0, 0.0, 0.0);
     for _ in 0..15 {
@@ -89,7 +90,10 @@ fn main() {
             break;
         }
     }
-    println!("A final: state {:?}, attention {:.2}", soldier.state, soldier.attention.level);
+    println!(
+        "A final: state {:?}, attention {:.2}",
+        soldier.state, soldier.attention.level
+    );
 
     // ---- Scene A2: full exposure → alarm → body found.
     let mut soldier2 = SoldierBrain::new(2, Vec3::new(0.0, 0.0, 0.0), vec![]);
@@ -99,11 +103,17 @@ fn main() {
         input.target_pos = Some(player_spot);
         soldier2.tick(input);
     }
-    println!("A2 exposed: state {:?}, attention {:.2}", soldier2.state, soldier2.attention.level);
+    println!(
+        "A2 exposed: state {:?}, attention {:.2}",
+        soldier2.state, soldier2.attention.level
+    );
     let mut input = base_input();
     input.body_seen = true;
     let out = soldier2.tick(input);
-    println!("A2 body found: state {:?}, voice {:?}", out.state, out.voice);
+    println!(
+        "A2 body found: state {:?}, voice {:?}",
+        out.state, out.voice
+    );
 
     // ---- Scene B: one footstep, three ears.
     let event = StimulusEvent {
@@ -138,30 +148,47 @@ fn main() {
             hound.pos += dir * 0.02;
         }
     }
-    println!("C hound: state {:?}, lock {:.2}, pos {:?}", hound.state, hound.lock, hound.pos);
+    println!(
+        "C hound: state {:?}, lock {:.2}, pos {:?}",
+        hound.state, hound.lock, hound.pos
+    );
     scent.rain = 1.0;
     for _ in 0..2400 {
         scent.tick();
     }
     let sample = scent.sample(hound.pos, 3.0);
     let out = hound.tick(sample, handler, false);
-    println!("C after rain: sample {:?}, hound {:?}", sample.map(|(_, s)| s), out.state);
+    println!(
+        "C after rain: sample {:?}, hound {:?}",
+        sample.map(|(_, s)| s),
+        out.state
+    );
     for x in 0..21 {
         scent.deposit(Vec3::new(x as f32, 0.0, 0.0), 1.0);
     }
     let broken = scent.break_radius(Vec3::new(10.0, 0.0, 0.0), 3.0);
-    println!("C grace break: {broken} segments broken, {} remain", scent.segments.len());
+    println!(
+        "C grace break: {broken} segments broken, {} remain",
+        scent.segments.len()
+    );
 
     // ---- Scene D: Weathervane report → alert budget.
     let mut weather = WeathervaneBrain::new(vec![Vec3::new(0.0, 10.0, 0.0)]);
     let mut budget = AlertBudget::new();
     for _ in 0..600 {
         if let Some(report) = weather.tick(true, Some(Vec3::new(5.0, 0.0, 5.0))) {
-            println!("D weathervane reported: confidence {:.2}", report.confidence);
+            println!(
+                "D weathervane reported: confidence {:.2}",
+                report.confidence
+            );
             budget.report_received();
         }
     }
-    println!("D alert level {:.1}, patrol tier {}", budget.level, budget.patrol_tier());
+    println!(
+        "D alert level {:.1}, patrol tier {}",
+        budget.level,
+        budget.patrol_tier()
+    );
 
     // ---- Scene D2: Neighbour writes an assault description.
     let mut neighbour = NeighbourBrain::new();
@@ -198,7 +225,10 @@ fn main() {
         input.compliant = true;
         guard.tick(input);
         if guard.checkpoint_phase != prev_phase {
-            println!("E checkpoint: phase {:?} -> {:?}", prev_phase, guard.checkpoint_phase);
+            println!(
+                "E checkpoint: phase {:?} -> {:?}",
+                prev_phase, guard.checkpoint_phase
+            );
             prev_phase = guard.checkpoint_phase;
         }
     }
@@ -220,19 +250,39 @@ fn main() {
     );
     t1.damage(MechaComponent::Coolant);
     t1.damage(MechaComponent::Coolant);
-    println!("F type1 breached: dead {}, ladder {}", t1.is_dead(), t1.ladder_stage());
+    println!(
+        "F type1 breached: dead {}, ladder {}",
+        t1.is_dead(),
+        t1.ladder_stage()
+    );
     let mut t2 = Type2Governor::new();
-    println!("F type2 unbought trigger: {}", t2.trigger_charge(Vec3::X, false));
-    println!("F type2 bought trigger: {}", t2.trigger_charge(Vec3::X, true));
+    println!(
+        "F type2 unbought trigger: {}",
+        t2.trigger_charge(Vec3::X, false)
+    );
+    println!(
+        "F type2 bought trigger: {}",
+        t2.trigger_charge(Vec3::X, true)
+    );
     for _ in 0..240 {
         t2.tick();
     }
-    println!("F type2 after windup: state {:?}, gib {}", t2.state, t2.contact_gib_capable());
+    println!(
+        "F type2 after windup: state {:?}, gib {}",
+        t2.state,
+        t2.contact_gib_capable()
+    );
     if let Some(scream) = t2.scream(Vec3::new(0.0, 0.0, 0.0)) {
-        println!("F type2 scream heard at 100m: {:.2}", scream.heard_at(Vec3::new(100.0, 0.0, 0.0)));
+        println!(
+            "F type2 scream heard at 100m: {:.2}",
+            scream.heard_at(Vec3::new(100.0, 0.0, 0.0))
+        );
     }
     t2.silence_voice();
-    println!("F type2 silenced: scream present {}", t2.scream(Vec3::ZERO).is_some());
+    println!(
+        "F type2 silenced: scream present {}",
+        t2.scream(Vec3::ZERO).is_some()
+    );
     t2.end_charge();
     for _ in 0..800 {
         t2.tick();

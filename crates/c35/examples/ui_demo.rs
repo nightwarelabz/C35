@@ -20,8 +20,8 @@
 
 use c35::glam::Vec3;
 use c35::scene::CameraPose;
-use c35::wgpu::util::DeviceExt;
 use c35::ui::{Align, Anchor, DialogueCue, Rect, UiScreen};
+use c35::wgpu::util::DeviceExt;
 use c35::world::{days_from_civil, world_state, Observer, WorldState};
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -47,7 +47,11 @@ fn crc32(data: &[u8]) -> u32 {
     for (i, e) in table.iter_mut().enumerate() {
         let mut c = i as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         *e = c;
     }
@@ -172,7 +176,13 @@ fn build_screen(w: u32, h: u32) -> UiScreen {
     );
     // Footer hint.
     let foot = s.anchor((400.0, 18.0), Anchor::BottomCenter, 12.0);
-    s.text_in("ENTER - SELECT   ESC - BACK", foot, 12.0, DIM, Align::Center);
+    s.text_in(
+        "ENTER - SELECT   ESC - BACK",
+        foot,
+        12.0,
+        DIM,
+        Align::Center,
+    );
     s
 }
 
@@ -209,7 +219,12 @@ fn main() {
         == bytemuck::cast_slice::<c35::ui::UiVertex, u8>(&mesh_b.vertices)
         && mesh_a.indices == mesh_b.indices;
     println!("=== UI DEMO LEDGER ===");
-    println!("frame            : {}x{} (scale {:.2})", width, height, height as f32 / 480.0);
+    println!(
+        "frame            : {}x{} (scale {:.2})",
+        width,
+        height,
+        height as f32 / 480.0
+    );
     println!("quads            : {}", ledger_a.quads);
     println!("triangles        : {}", ledger_a.triangles);
     println!("vertices         : {}", ledger_a.vertices);
@@ -231,16 +246,22 @@ fn main() {
     renderer.set_vista_suppressed(true);
     renderer.pin_governor(Some(0));
 
-    let out_tex = renderer.device.create_texture(&c35::wgpu::TextureDescriptor {
-        label: Some("ui output"),
-        size: c35::wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: c35::wgpu::TextureDimension::D2,
-        format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
+    let out_tex = renderer
+        .device
+        .create_texture(&c35::wgpu::TextureDescriptor {
+            label: Some("ui output"),
+            size: c35::wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: c35::wgpu::TextureDimension::D2,
+            format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: c35::wgpu::TextureUsages::RENDER_ATTACHMENT | c35::wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
     let out_view = out_tex.create_view(&Default::default());
     let world = pinned_world();
     let pose = CameraPose {
@@ -249,67 +270,81 @@ fn main() {
         fov_y_deg: 50.0,
     };
     renderer.render(&out_view, &pose, &world, 0.0);
-    let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+    let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
 
     // UI pass: one pipeline, one indexed draw, LoadOp::Load
     // so the scene frame survives underneath.
-    let module = renderer.device.create_shader_module(c35::wgpu::ShaderModuleDescriptor {
-        label: Some("ui"),
-        source: c35::wgpu::ShaderSource::Wgsl(UI_WGSL.into()),
-    });
-    let pipeline = renderer.device.create_render_pipeline(&c35::wgpu::RenderPipelineDescriptor {
-        label: Some("ui pipeline"),
-        layout: None,
-        vertex: c35::wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[c35::wgpu::VertexBufferLayout {
-                array_stride: 24,
-                step_mode: c35::wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    c35::wgpu::VertexAttribute {
-                        format: c35::wgpu::VertexFormat::Float32x2,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    c35::wgpu::VertexAttribute {
-                        format: c35::wgpu::VertexFormat::Float32x4,
-                        offset: 8,
-                        shader_location: 1,
-                    },
-                ],
-            }],
-        },
-        fragment: Some(c35::wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(c35::wgpu::ColorTargetState {
-                format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
-                blend: Some(c35::wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: c35::wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: c35::wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: c35::wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    });
-    let vb = renderer.device.create_buffer_init(&c35::wgpu::util::BufferInitDescriptor {
-        label: Some("ui vertices"),
-        contents: bytemuck::cast_slice(&mesh_a.vertices),
-        usage: c35::wgpu::BufferUsages::VERTEX,
-    });
-    let ib = renderer.device.create_buffer_init(&c35::wgpu::util::BufferInitDescriptor {
-        label: Some("ui indices"),
-        contents: bytemuck::cast_slice(&mesh_a.indices),
-        usage: c35::wgpu::BufferUsages::INDEX,
-    });
-    let mut encoder = renderer.device.create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
-        label: Some("ui encoder"),
-    });
+    let module = renderer
+        .device
+        .create_shader_module(c35::wgpu::ShaderModuleDescriptor {
+            label: Some("ui"),
+            source: c35::wgpu::ShaderSource::Wgsl(UI_WGSL.into()),
+        });
+    let pipeline = renderer
+        .device
+        .create_render_pipeline(&c35::wgpu::RenderPipelineDescriptor {
+            label: Some("ui pipeline"),
+            layout: None,
+            vertex: c35::wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[c35::wgpu::VertexBufferLayout {
+                    array_stride: 24,
+                    step_mode: c35::wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        c35::wgpu::VertexAttribute {
+                            format: c35::wgpu::VertexFormat::Float32x2,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        c35::wgpu::VertexAttribute {
+                            format: c35::wgpu::VertexFormat::Float32x4,
+                            offset: 8,
+                            shader_location: 1,
+                        },
+                    ],
+                }],
+            },
+            fragment: Some(c35::wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(c35::wgpu::ColorTargetState {
+                    format: c35::wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(c35::wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: c35::wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: c35::wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: c35::wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+    let vb = renderer
+        .device
+        .create_buffer_init(&c35::wgpu::util::BufferInitDescriptor {
+            label: Some("ui vertices"),
+            contents: bytemuck::cast_slice(&mesh_a.vertices),
+            usage: c35::wgpu::BufferUsages::VERTEX,
+        });
+    let ib = renderer
+        .device
+        .create_buffer_init(&c35::wgpu::util::BufferInitDescriptor {
+            label: Some("ui indices"),
+            contents: bytemuck::cast_slice(&mesh_a.indices),
+            usage: c35::wgpu::BufferUsages::INDEX,
+        });
+    let mut encoder =
+        renderer
+            .device
+            .create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
+                label: Some("ui encoder"),
+            });
     {
         let mut pass = encoder.begin_render_pass(&c35::wgpu::RenderPassDescriptor {
             label: Some("ui pass"),
@@ -332,7 +367,10 @@ fn main() {
         pass.draw_indexed(0..mesh_a.indices.len() as u32, 0, 0..1);
     }
     renderer.queue.submit([encoder.finish()]);
-    let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+    let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
 
     // Readback + PNG.
     let bpr = (width * 4).div_ceil(256) * 256;
@@ -342,9 +380,12 @@ fn main() {
         usage: c35::wgpu::BufferUsages::MAP_READ | c35::wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut encoder = renderer.device.create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
-        label: Some("ui copy"),
-    });
+    let mut encoder =
+        renderer
+            .device
+            .create_command_encoder(&c35::wgpu::CommandEncoderDescriptor {
+                label: Some("ui copy"),
+            });
     encoder.copy_texture_to_buffer(
         c35::wgpu::TexelCopyTextureInfo {
             texture: &out_tex,
@@ -360,11 +401,18 @@ fn main() {
                 rows_per_image: Some(height),
             },
         },
-        c35::wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        c35::wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
     renderer.queue.submit([encoder.finish()]);
     buf.slice(..).map_async(c35::wgpu::MapMode::Read, |_| {});
-    let _ = renderer.device.poll(c35::wgpu::PollType::Wait { submission_index: None, timeout: None });
+    let _ = renderer.device.poll(c35::wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
     let range = buf.slice(..).get_mapped_range();
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for row in 0..height as usize {
@@ -375,5 +423,9 @@ fn main() {
     buf.unmap();
     let path = format!("{out_dir}/ui-menu.png");
     write_png(&path, width, height, &pixels);
-    println!("saved            : {} ({} bytes)", path, std::fs::metadata(&path).unwrap().len());
+    println!(
+        "saved            : {} ({} bytes)",
+        path,
+        std::fs::metadata(&path).unwrap().len()
+    );
 }

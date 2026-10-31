@@ -156,10 +156,9 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, b: u8) -> Result<(), ParseError> {
         match self.bump() {
             Some(got) if got == b => Ok(()),
-            Some(got) => Err(self.err(format!(
-                "expected '{}', found '{}'",
-                b as char, got as char
-            ))),
+            Some(got) => {
+                Err(self.err(format!("expected '{}', found '{}'", b as char, got as char)))
+            }
             None => Err(self.err(format!("expected '{}', found end of input", b as char))),
         }
     }
@@ -175,9 +174,7 @@ impl<'a> Parser<'a> {
 
     fn parse_value(&mut self, depth: usize) -> Result<Value, ParseError> {
         if depth > MAX_DEPTH {
-            return Err(self.err(format!(
-                "nesting deeper than {MAX_DEPTH} is refused"
-            )));
+            return Err(self.err(format!("nesting deeper than {MAX_DEPTH} is refused")));
         }
         self.skip_ws();
         let line = self.line;
@@ -212,11 +209,7 @@ impl<'a> Parser<'a> {
                         match self.bump() {
                             Some(b',') => continue,
                             Some(b'}') => break,
-                            _ => {
-                                return Err(self.err(
-                                    "expected ',' or '}' in object",
-                                ))
-                            }
+                            _ => return Err(self.err("expected ',' or '}' in object")),
                         }
                     }
                 }
@@ -241,11 +234,7 @@ impl<'a> Parser<'a> {
                         match self.bump() {
                             Some(b',') => continue,
                             Some(b']') => break,
-                            _ => {
-                                return Err(self.err(
-                                    "expected ',' or ']' in array",
-                                ))
-                            }
+                            _ => return Err(self.err("expected ',' or ']' in array")),
                         }
                     }
                 }
@@ -298,22 +287,16 @@ impl<'a> Parser<'a> {
                         if (0xD800..0xDC00).contains(&hi) {
                             // High surrogate: a low surrogate must follow.
                             if self.bump() != Some(b'\\') || self.bump() != Some(b'u') {
-                                return Err(self.err(
-                                    "unpaired high surrogate in string escape",
-                                ));
+                                return Err(self.err("unpaired high surrogate in string escape"));
                             }
                             let lo = self.parse_hex4()?;
                             if !(0xDC00..0xE000).contains(&lo) {
-                                return Err(self.err(
-                                    "unpaired high surrogate in string escape",
-                                ));
+                                return Err(self.err("unpaired high surrogate in string escape"));
                             }
                             let c = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
                             out.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
                         } else if (0xDC00..0xE000).contains(&hi) {
-                            return Err(self.err(
-                                "unpaired low surrogate in string escape",
-                            ));
+                            return Err(self.err("unpaired low surrogate in string escape"));
                         } else {
                             out.push(char::from_u32(hi).unwrap_or('\u{FFFD}'));
                         }
@@ -346,18 +329,12 @@ impl<'a> Parser<'a> {
                         for _ in 0..need {
                             match self.bump() {
                                 Some(c) => seq.push(c),
-                                None => {
-                                    return Err(self.err(
-                                        "truncated UTF-8 in string",
-                                    ))
-                                }
+                                None => return Err(self.err("truncated UTF-8 in string")),
                             }
                         }
                         match std::str::from_utf8(&seq) {
                             Ok(s) => out.push_str(s),
-                            Err(_) => {
-                                return Err(self.err("invalid UTF-8 in string"))
-                            }
+                            Err(_) => return Err(self.err("invalid UTF-8 in string")),
                         }
                     }
                 }

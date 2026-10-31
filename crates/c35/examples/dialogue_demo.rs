@@ -69,9 +69,13 @@ fn main() {
         ]),
         Line::new("patrol", "CONTROL", "The patrol passes every ten minutes.").then("note"),
         Line::new("gate", "CONTROL", "The side gate sticks after rain.").then("note"),
-        Line::new("note", "CONTROL", "One more thing: the ledger page is torn.")
-            .gated(Gate::flag("trusted", true))
-            .then("wrap"),
+        Line::new(
+            "note",
+            "CONTROL",
+            "One more thing: the ledger page is torn.",
+        )
+        .gated(Gate::flag("trusted", true))
+        .then("wrap"),
         Line::new("wrap", "FIELD", "Copy. Moving on."),
         Line::new("signoff", "CONTROL", "Acknowledged. Out."),
     ])

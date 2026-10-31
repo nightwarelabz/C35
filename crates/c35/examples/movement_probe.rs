@@ -10,8 +10,8 @@
 use std::time::Instant;
 
 use c35::locomotion::{
-    gait_params, proof_script, AnimInput, Animator, Controller, Gait, ScriptLeg,
-    CROUCH_SPEED, RUN_SPEED, SPRINT_SPEED, WALK_SPEED,
+    gait_params, proof_script, AnimInput, Animator, Controller, Gait, ScriptLeg, CROUCH_SPEED,
+    RUN_SPEED, SPRINT_SPEED, WALK_SPEED,
 };
 use c35::operator::{build_operator_frame, foot_kinematics, root_matrix, PoseFrame, BONE_COUNT};
 use c35::scene::height_at;
@@ -34,7 +34,12 @@ fn stats(samples: &[f32]) -> (f32, f32, f32) {
 /// ANIMATOR's smoothed reference — the same number the host hands
 /// the mesh build — so measured feet and drawn feet agree.
 fn sole_world(frame: &PoseFrame, pos: Vec2, yaw: f32, ground: f32) -> [Vec3; 2] {
-    let root = root_matrix(Vec3::new(pos.x, 0.0, pos.y), ground, frame, yaw.to_degrees());
+    let root = root_matrix(
+        Vec3::new(pos.x, 0.0, pos.y),
+        ground,
+        frame,
+        yaw.to_degrees(),
+    );
     [
         root.transform_point3(foot_kinematics(frame, true).sole),
         root.transform_point3(foot_kinematics(frame, false).sole),
@@ -42,7 +47,12 @@ fn sole_world(frame: &PoseFrame, pos: Vec2, yaw: f32, ground: f32) -> [Vec3; 2] 
 }
 
 fn ankle_world(frame: &PoseFrame, pos: Vec2, yaw: f32, ground: f32) -> [Vec3; 2] {
-    let root = root_matrix(Vec3::new(pos.x, 0.0, pos.y), ground, frame, yaw.to_degrees());
+    let root = root_matrix(
+        Vec3::new(pos.x, 0.0, pos.y),
+        ground,
+        frame,
+        yaw.to_degrees(),
+    );
     [
         root.transform_point3(foot_kinematics(frame, true).ankle),
         root.transform_point3(foot_kinematics(frame, false).ankle),
@@ -56,7 +66,11 @@ fn survey() {
         ("diag SW", Vec2::new(-8.0, 64.0), Vec2::new(-58.0, 24.0)),
         ("west z=44", Vec2::new(-8.0, 44.0), Vec2::new(-64.0, 44.0)),
         ("inland x=-8", Vec2::new(-8.0, 64.0), Vec2::new(-8.0, 4.0)),
-        ("south x=-14", Vec2::new(-14.0, 64.0), Vec2::new(-14.0, 124.0)),
+        (
+            "south x=-14",
+            Vec2::new(-14.0, 64.0),
+            Vec2::new(-14.0, 124.0),
+        ),
     ];
     for (name, a, b) in lines {
         let n = ((b - a).length() / 2.0) as usize;
@@ -96,8 +110,21 @@ impl Census {
 }
 
 const BONE_NAMES: [&str; BONE_COUNT] = [
-    "Pelvis", "Torso", "Head", "UpperArmL", "ForearmL", "HandL", "UpperArmR", "ForearmR",
-    "HandR", "ThighL", "ShinL", "FootL", "ThighR", "ShinR", "FootR",
+    "Pelvis",
+    "Torso",
+    "Head",
+    "UpperArmL",
+    "ForearmL",
+    "HandL",
+    "UpperArmR",
+    "ForearmR",
+    "HandR",
+    "ThighL",
+    "ShinL",
+    "FootL",
+    "ThighR",
+    "ShinR",
+    "FootR",
 ];
 
 /// Isolation test: constant input on the gentle shelf, heading
@@ -150,7 +177,10 @@ fn isolation() {
     let (m, p, x) = stats(&contact_speeds);
     println!(
         "    isolation contact sole speed: mean {:.4} p95 {:.4} max {:.4} (n={})",
-        m, p, x, contact_speeds.len()
+        m,
+        p,
+        x,
+        contact_speeds.len()
     );
 }
 
@@ -169,7 +199,11 @@ fn main() {
     let (step, duty, clr, _, _) = gait_params(CROUCH_SPEED, 1.0);
     println!(
         "  crouch v {:.2}: step {:.2} m, duty {:.2}, clearance {:.3} m, cadence {:.2} steps/s",
-        CROUCH_SPEED, step, duty, clr, CROUCH_SPEED / step
+        CROUCH_SPEED,
+        step,
+        duty,
+        clr,
+        CROUCH_SPEED / step
     );
 
     // ---- the full proof script at 240 Hz: skate, census, FK ----
@@ -247,8 +281,7 @@ fn main() {
         // The cycle census and the skate/plants measurements
         // describe the CYCLES: steady speed AND running straight
         // (turns are the metric runs' business, measured there).
-        let yaw_rate = ((a.yaw - prev_yaw + std::f32::consts::PI * 3.0)
-            % std::f32::consts::TAU
+        let yaw_rate = ((a.yaw - prev_yaw + std::f32::consts::PI * 3.0) % std::f32::consts::TAU
             - std::f32::consts::PI)
             .abs()
             / DT;
@@ -321,9 +354,14 @@ fn main() {
         prev_ankle = Some(ankle_world(&frame, a.pos, a.yaw, anim.ground_y()));
 
         // Mesh build cost (the per-frame CPU price of the pose).
-        if frames % 24 == 0 {
+        if frames.is_multiple_of(24) {
             let s = Instant::now();
-            let mesh = build_operator_frame(&frame, Vec3::new(a.pos.x, 0.0, a.pos.y), anim.ground_y(), a.yaw.to_degrees());
+            let mesh = build_operator_frame(
+                &frame,
+                Vec3::new(a.pos.x, 0.0, a.pos.y),
+                anim.ground_y(),
+                a.yaw.to_degrees(),
+            );
             build_us += s.elapsed().as_secs_f64() * 1e6;
             build_n += 1;
             std::hint::black_box(mesh.vertices.len());
@@ -349,7 +387,10 @@ fn main() {
     let (m, p, x) = stats(&fk_err);
     println!(
         "  IK/FK ankle error at full gait weight: mean {:.4} m, p95 {:.4}, max {:.4} (n={})",
-        m, p, x, fk_err.len()
+        m,
+        p,
+        x,
+        fk_err.len()
     );
     if let Some((entry, dist, dur)) = slide_result {
         println!(
@@ -408,11 +449,11 @@ fn main() {
             continue;
         }
         println!("  {} ({} samples):", names[b], census[b].n);
-        for i in 0..BONE_COUNT {
+        for (i, name) in BONE_NAMES.iter().enumerate() {
             let (mn, mx) = (census[b].min[i], census[b].max[i]);
             println!(
                 "    {:10} x [{:7.1},{:7.1}]  y [{:7.1},{:7.1}]  z [{:7.1},{:7.1}]",
-                BONE_NAMES[i], mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]
+                name, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]
             );
         }
     }

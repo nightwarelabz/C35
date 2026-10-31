@@ -205,7 +205,7 @@ impl Governor {
             return false;
         }
 
-        if self.frames % EVAL_EVERY != 0 {
+        if !self.frames.is_multiple_of(EVAL_EVERY) {
             return false;
         }
 

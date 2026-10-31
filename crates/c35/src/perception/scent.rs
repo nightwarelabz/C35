@@ -97,8 +97,7 @@ impl ScentField {
     /// not blow away.
     pub fn tick(&mut self) {
         let dt = 1.0 / Self::TICKS_PER_SEC;
-        let half_life_decay =
-            0.5f32.powf(dt / Self::HALF_LIFE_SECS);
+        let half_life_decay = 0.5f32.powf(dt / Self::HALF_LIFE_SECS);
         let wash = 1.0 - 0.55 * self.rain * dt * 4.0;
         // Drift is horizontal only: wind leans the trail
         // downwind, it never lifts it off the ground plane
@@ -166,12 +165,7 @@ impl ScentField {
     /// [`ScentField::sample`] (re-acquisition: the
     /// nose turns toward the closest scent and takes
     /// a new heading from it).
-    pub fn sample_heading(
-        &self,
-        nose: Vec3,
-        radius: f32,
-        heading: Vec3,
-    ) -> Option<(Vec3, f32)> {
+    pub fn sample_heading(&self, nose: Vec3, radius: f32, heading: Vec3) -> Option<(Vec3, f32)> {
         let mut best: Option<(f32, Vec3, f32)> = None;
         for s in &self.segments {
             let d = (s.pos - nose).length();

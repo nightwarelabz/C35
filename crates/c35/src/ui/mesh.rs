@@ -52,11 +52,24 @@ impl UiMesh {
             return;
         }
         let base = self.vertices.len() as u32;
-        self.vertices.push(UiVertex { position: bl, color });
-        self.vertices.push(UiVertex { position: br, color });
-        self.vertices.push(UiVertex { position: tr, color });
-        self.vertices.push(UiVertex { position: tl, color });
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.vertices.push(UiVertex {
+            position: bl,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: br,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: tr,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: tl,
+            color,
+        });
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Append an axis-aligned NDC rect: (x0, y0) bottom-left

@@ -31,7 +31,7 @@
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::ecs::{Arena, CoreStats, Entity, JobPool, SystemDef};
-use crate::scene::{CameraPose, Lod, TileDraw, TILE_COUNT, TILES_PER_SIDE};
+use crate::scene::{CameraPose, Lod, TileDraw, TILES_PER_SIDE, TILE_COUNT};
 use crate::world::WorldState;
 
 // ---------------------------------------------------------------------------
@@ -105,9 +105,9 @@ impl Frustum {
     }
 
     pub fn sphere_visible(&self, center: Vec3, radius: f32) -> bool {
-        self.planes.iter().all(|p| {
-            p.x * center.x + p.y * center.y + p.z * center.z + p.w >= -radius
-        })
+        self.planes
+            .iter()
+            .all(|p| p.x * center.x + p.y * center.y + p.z * center.z + p.w >= -radius)
     }
 
     /// The six inward planes as vec4s — the exact floats the GPU cull
@@ -216,10 +216,7 @@ impl Vista {
         v.cameras.insert(v.camera_e, crate::scene::HERO_POSE);
         // Placeholder world state until the first update binds reality
         // (a fixed epoch instant at the equator fallback observer).
-        let placeholder = crate::world::world_state(
-            0.0,
-            &crate::world::Observer::unknown(),
-        );
+        let placeholder = crate::world::world_state(0.0, &crate::world::Observer::unknown());
         v.worlds.insert(v.world_e, placeholder);
         for (i, &(center, radius, tris)) in tile_meta.iter().enumerate() {
             v.tiles.insert(
@@ -414,7 +411,16 @@ fn clamp_neighbours(vis: &mut [TileVis]) {
                     continue;
                 }
                 let mut finest = vis[i].step;
-                for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                for (di, dj) in [
+                    (1i32, 0i32),
+                    (-1, 0),
+                    (0, 1),
+                    (0, -1),
+                    (1, 1),
+                    (1, -1),
+                    (-1, 1),
+                    (-1, -1),
+                ] {
                     let (ai, aj) = (ti as i32 + di, tj as i32 + dj);
                     if ai < 0 || aj < 0 || ai >= n as i32 || aj >= n as i32 {
                         continue;

@@ -461,3 +461,9 @@ impl NeighbourBrain {
         None
     }
 }
+
+impl Default for NeighbourBrain {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -195,7 +195,7 @@ impl ChoiceOption {
     /// Whether this option is available under
     /// `facts`.
     pub fn available(&self, facts: &FactSet) -> bool {
-        self.gate.as_ref().map_or(true, |g| g.passes(facts))
+        self.gate.as_ref().is_none_or(|g| g.passes(facts))
     }
 }
 
@@ -263,6 +263,6 @@ impl Line {
 
     /// Whether this line is visible under `facts`.
     pub fn visible(&self, facts: &FactSet) -> bool {
-        self.gate.as_ref().map_or(true, |g| g.passes(facts))
+        self.gate.as_ref().is_none_or(|g| g.passes(facts))
     }
 }

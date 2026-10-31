@@ -51,11 +51,7 @@ pub fn hear_radius(kind: StimulusKind) -> f32 {
 /// to the kind radius; an occluded path muffles to a
 /// quarter — sound leaks through walls, it does not stop
 /// at them, and it never arrives louder than it left.
-pub fn propagate_one(
-    event: &StimulusEvent,
-    ear: Vec3,
-    field: &LightField,
-) -> Option<HeardEvent> {
+pub fn propagate_one(event: &StimulusEvent, ear: Vec3, field: &LightField) -> Option<HeardEvent> {
     let d = (event.pos - ear).length();
     let radius = hear_radius(event.kind);
     if d >= radius {
@@ -86,11 +82,7 @@ pub fn propagate_one(
 /// events since the last tick (the log is tick-ordered;
 /// perception never reorders it). Output order is input
 /// order — determinism rides on the log, not on this pass.
-pub fn propagate(
-    events: &[StimulusEvent],
-    ear: Vec3,
-    field: &LightField,
-) -> Vec<HeardEvent> {
+pub fn propagate(events: &[StimulusEvent], ear: Vec3, field: &LightField) -> Vec<HeardEvent> {
     events
         .iter()
         .filter_map(|e| propagate_one(e, ear, field))

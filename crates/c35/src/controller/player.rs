@@ -20,8 +20,8 @@ use crate::controller::camera::{
     TP_FOV_AIM_DEG, TP_FOV_BASE_DEG, TP_FOV_MAX_DEG, TP_MIN_BOOM, WALLRUN_ROLL_DEG,
 };
 use crate::controller::input::{
-    ControllerConfig, PlayerInput, Posture, SpeedTier, ViewMode, CROUCH_DROP,
-    POSTURE_TRANSITION_S, STAND_EYE,
+    ControllerConfig, PlayerInput, Posture, SpeedTier, ViewMode, CROUCH_DROP, POSTURE_TRANSITION_S,
+    STAND_EYE,
 };
 use crate::locomotion::{AnimInput, Animator};
 use crate::operator::{PoseFrame, ViewmodelPose};
@@ -357,7 +357,11 @@ impl PlayerController {
 
         // ---- posture eye height: constant-rate travel ----
         let eye_rate = CROUCH_DROP / POSTURE_TRANSITION_S;
-        self.eye_height = move_toward(self.eye_height, self.posture.eye_height(), eye_rate * FIXED_DT);
+        self.eye_height = move_toward(
+            self.eye_height,
+            self.posture.eye_height(),
+            eye_rate * FIXED_DT,
+        );
         let eye = feet + Vec3::new(0.0, self.eye_height, 0.0);
 
         // ---- FOV: eased toward the register the state
@@ -378,7 +382,10 @@ impl PlayerController {
             base + (max_fov - base) * t
         } else if self.sim.mode == BodyMode::WallRun {
             base
-        } else if !crouch && matches!(input.speed, SpeedTier::Sprint) && speed_h > crate::locomotion::RUN_SPEED {
+        } else if !crouch
+            && matches!(input.speed, SpeedTier::Sprint)
+            && speed_h > crate::locomotion::RUN_SPEED
+        {
             max_fov
         } else {
             base
