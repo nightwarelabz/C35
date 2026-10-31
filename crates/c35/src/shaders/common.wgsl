@@ -25,6 +25,7 @@ struct Uniforms {
     misc: vec4<f32>,        // x: time s · y: shadow strength · z: render scale · w: aspect
     quality: vec4<f32>,     // x: terrain detail fade multiplier · y: water wave octaves · z: shadow PCF texel size (0 = shadows shed)
     present: vec4<f32>,     // M6: x: PS1.5 mode (0 classic / 1 PS1.5) · y: PS1.5 fog density multiplier · z: palette steps · w: unused
+    surface: vec4<f32>,     // x: surface wetness (0 dry · 1 full wet, the weather layer's number) · yzw: unused
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
