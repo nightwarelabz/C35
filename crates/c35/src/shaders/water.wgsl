@@ -43,7 +43,7 @@ fn noise_grad(p: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(vnoise(p + vec2<f32>(e, 0.0)) - c, vnoise(p + vec2<f32>(0.0, e)) - c) / e;
 }
 
-fn water_normal(p: vec2<f32>, t: f32, dist: f32, amp: f32) -> vec3<f32> {
+fn water_normal(p: vec2<f32>, t: f32, dist: f32, amp: f32, view_dir: vec3<f32>) -> vec3<f32> {
     var g = vec2<f32>(0.0);
     g += wave_grad(p, vec2<f32>(0.83, 0.55), 27.0, 0.85, 0.085, t);
     // The governor sheds wave octaves from the top down (quality.y):
@@ -52,17 +52,36 @@ fn water_normal(p: vec2<f32>, t: f32, dist: f32, amp: f32) -> vec3<f32> {
     if (oct >= 2) {
         g += wave_grad(p, vec2<f32>(-0.42, 0.91), 13.0, 1.20, 0.060, t);
     }
+    // Push 3, second pass: the two short octaves also fade with
+    // distance (they are governor-gated but were never range-gated;
+    // at a grazing rake their cells tile the whole mid-field and
+    // glitter as speckle long after the breakup has calmed).
+    let hfade = exp(-dist * 0.004);
     if (oct >= 3) {
-        g += wave_grad(p, vec2<f32>(0.97, -0.24), 6.1, 1.80, 0.038, t);
+        g += wave_grad(p, vec2<f32>(0.97, -0.24), 6.1, 1.80, 0.038, t) * hfade;
     }
     if (oct >= 4) {
-        g += wave_grad(p, vec2<f32>(-0.20, -0.98), 3.1, 2.50, 0.022, t);
+        g += wave_grad(p, vec2<f32>(-0.20, -0.98), 3.1, 2.50, 0.022, t) * hfade * hfade;
     }
     // Noise breakup: strong nearby, easing off with distance so the far
-    // field calms instead of aliasing.
-    let nfade = exp(-dist * 0.006);
-    let ng = noise_grad(p * 0.33 + vec2<f32>(t * 0.14, t * 0.09)) * 0.16
-        + noise_grad(p * 0.09 - vec2<f32>(t * 0.05, 0.0)) * 0.20;
+    // field calms instead of aliasing. Push 3: the fade runs faster
+    // (0.006 -> 0.012 across the push's two passes) and the amplitudes
+    // drop — at mid-field the old breakup chopped the horizon's
+    // reflection into closed cells, the tan "donut" tiling on every
+    // night still.
+    let nfade = exp(-dist * 0.012);
+    // Push 3 — the streak stretch: the breakup domain is compressed
+    // along the view azimuth, so its features elongate ~2.2x toward
+    // the camera. A light's reflection then drags into a streak —
+    // the water's version of the wet street's tail lobe — instead
+    // of closing into rings. The breakup is a perturbation, not a
+    // field solve, so sampling it in the stretched domain is the
+    // whole trick; the wave octaves above keep their true domain.
+    let va = normalize(view_dir.xz + vec2<f32>(1e-4, 0.0));
+    let vp = vec2<f32>(-va.y, va.x);
+    let sp = va * (dot(p, va) * 0.45) + vp * dot(p, vp);
+    let ng = noise_grad(sp * 0.33 + vec2<f32>(t * 0.14, t * 0.09)) * 0.08
+        + noise_grad(sp * 0.09 - vec2<f32>(t * 0.05, 0.0)) * 0.10;
     g += ng * nfade;
     return normalize(vec3<f32>(-g.x * amp, 1.0, -g.y * amp));
 }
@@ -89,7 +108,7 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     // Time itself slows as the sea freezes; amplitude dies with it.
     let t = u.misc.x * wave_scale;
     let amp = mix(1.0, 0.22, ice);
-    var n = water_normal(wp.xz, t, dist, amp);
+    var n = water_normal(wp.xz, t, dist, amp, view_dir);
     if (ice > 0.01) {
         // M3: frozen water is not a mirror. As the amp dies the normal
         // field goes uniform and the sun glint smeared into wind-stripes
@@ -111,16 +130,22 @@ fn fs_main(in: WaterOut) -> @location(0) vec4<f32> {
     // The sea's own body darkens with the daylight — unlit teal at
     // midnight would glow; the sky reflection carries the night.
     base *= 0.13 + 0.87 * u.water_p.w;
-    var col = mix(base, sky, clamp(fresnel * 1.35, 0.0, 1.0));
+    // Push 3: the mirror gain backs off (1.35 -> 1.15) so the sea's
+    // own dark body holds a share of the frame at grazing angles —
+    // a full mirror is what let the horizon band print at all.
+    var col = mix(base, sky, clamp(fresnel * 1.15, 0.0, 1.0));
 
     // Glitter paths: sun by day (shadowed by the terrain), moon by night.
+    // Push 3: the broad lobes calm (sun 0.15 -> 0.10, moon 0.10 ->
+    // 0.055) — their contours were the day stripes' and the night
+    // blobs' second carrier; the tight sparkle terms keep their gain.
     let shadow = shadow_factor(wp, vec3<f32>(0.0, 1.0, 0.0));
     let half_v = normalize(view_dir + u.sun_dir.xyz);
     let ndh = max(dot(n, half_v), 0.0);
-    col += u.sun_color.rgb * (pow(ndh, 840.0) * 4.0 + pow(ndh, 90.0) * 0.15) * shadow;
+    col += u.sun_color.rgb * (pow(ndh, 840.0) * 4.0 + pow(ndh, 90.0) * 0.10) * shadow;
     let mhalf = normalize(view_dir + u.moon_dir.xyz);
     let mndh = max(dot(n, mhalf), 0.0);
-    col += u.moon_color.rgb * (pow(mndh, 700.0) * 2.2 + pow(mndh, 80.0) * 0.10);
+    col += u.moon_color.rgb * (pow(mndh, 700.0) * 2.2 + pow(mndh, 80.0) * 0.055);
 
     // Ice sheet: patchy by large-scale noise, sheeting over as the ice
     // factor grows — pale, hard-glinting, nearly matte between patches.
