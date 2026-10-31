@@ -127,8 +127,14 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             // answers lamp positions AND the camera; it stretches
             // toward the viewer the way a reflection does, which no
             // painted streak ever managed.
-            col += tex.rgb * SODIUM * in.light * 1.35;
-            col += tex.rgb * SODIUM * core * 0.85;
+            // Every term this pass adds is scaled by the weather
+            // layer's wetness (u.surface.x): 1.0 — the default, and
+            // what every host rendered before the seam existed —
+            // multiplies each term by exactly 1.0, so the shipped
+            // full-wet look is the wetness = 1 frame, unchanged.
+            let wet = u.surface.x;
+            col += tex.rgb * SODIUM * in.light * 1.35 * wet;
+            col += tex.rgb * SODIUM * core * 0.85 * wet;
             let v = normalize(u.cam_pos.xyz - in.world_pos);
             let n2 = normalize(in.normal);
             let ndv = clamp(dot(n2, v), 0.0, 1.0);
@@ -144,7 +150,9 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             // safe default.
             let rough = tex.a;
             let spec_pow = mix(46.0, 13.0, rough);
-            let spec_gain = mix(5.0, 2.6, rough);
+            // Scaled by wetness here, once — both lobes below (the
+            // core streak and its tail) read this gain.
+            let spec_gain = mix(5.0, 2.6, rough) * wet;
             for (var i = 0; i < 24; i++) {
                 let lp = lamp_set.lamps[i];
                 if (lp.w > 0.0) {
@@ -177,7 +185,7 @@ fn fs_main(in: PropOut) -> @location(0) vec4<f32> {
             let hm = normalize(u.moon_dir.xyz + v);
             let sheen_pow = mix(160.0, 70.0, rough);
             let sheen = pow(max(dot(n2, hm), 0.0), sheen_pow);
-            col += u.moon_color.rgb * sheen * mix(0.5, 0.2, rough) * breakup;
+            col += u.moon_color.rgb * sheen * mix(0.5, 0.2, rough) * breakup * wet;
         }
     }
     col = apply_fog(col, in.world_pos);

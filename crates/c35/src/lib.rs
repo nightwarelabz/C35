@@ -125,6 +125,8 @@ struct Uniforms {
     quality: [f32; 4],
     /// M6 presentation: mode flag, PS1.5 fog multiplier, palette steps.
     present: [f32; 4],
+    /// Weather layer: surface wetness (0 dry · 1 full wet).
+    surface: [f32; 4],
 }
 
 #[repr(C)]
@@ -500,6 +502,10 @@ pub struct Renderer {
     /// M6 presentation mode + its fog look multiplier.
     present_mode: PresentMode,
     ps15_fog_mul: f32,
+    /// Weather layer's surface wetness, host-set per frame
+    /// (default 1.0 = the full-strength wet look the shaders
+    /// shipped with; see `set_wetness`).
+    wetness: f32,
     /// M7 velocity-aware history rejection (gain, threshold px).
     /// Ships inert (gain 0.0) until the motion A/B rules on it.
     vel_reject: (f32, f32),
@@ -1975,6 +1981,7 @@ impl Renderer {
             shadow_bytes,
             present_mode: PresentMode::Classic,
             ps15_fog_mul: 2.0,
+            wetness: 1.0,
             vel_reject: (0.0, 2.0),
             operator_pipeline,
             operator_depth_pipeline,
@@ -2423,6 +2430,22 @@ impl Renderer {
 
     pub fn present_mode(&self) -> PresentMode {
         self.present_mode
+    }
+
+    /// Weather layer: how wet the world's surfaces are, 0.0 (bone
+    /// dry) to 1.0 (fully soaked). The props shader's wet pass
+    /// scales its diffuse lift and its specular gain by this
+    /// number. The default is 1.0, which multiplies every wet
+    /// term by exactly 1.0 — arithmetically the wet look the
+    /// shaders shipped with — so a host that never calls this
+    /// renders the unchanged frame. Hosts that tick a
+    /// `WeatherState` pass `weather.wetness()` once per frame.
+    pub fn set_wetness(&mut self, wetness: f32) {
+        self.wetness = wetness.clamp(0.0, 1.0);
+    }
+
+    pub fn wetness(&self) -> f32 {
+        self.wetness
     }
 
     /// M7: velocity-aware history rejection for the TAA resolve —
@@ -2939,6 +2962,8 @@ impl Renderer {
                 PS15_PALETTE_STEPS,
                 0.0,
             ],
+            // Weather layer: x surface wetness · yzw unused.
+            surface: [self.wetness, 0.0, 0.0, 0.0],
         };
         self.queue
             .write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
